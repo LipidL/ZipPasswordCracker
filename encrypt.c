@@ -91,7 +91,7 @@ void PBKDF2_HMAC_SHA1(unsigned char *password, uint64_t password_length,
 bool is_valid_key(u8 *key, u16 key_length, u8 *salt, u16 salt_length, u16 *pwd_verification) {
     u64 derived_key_length = 2 * key_length + 2;
     u8 *derived_key = malloc(derived_key_length);
-    PBKDF2_HMAC_SHA1(key, key_length, salt, 8, 1000, derived_key_length, derived_key);
+    PBKDF2_HMAC_SHA1(key, strlen((const char *)key), salt, salt_length, 1000, derived_key_length, derived_key);
     if (derived_key[derived_key_length - 2] != (u8)((*pwd_verification) & 0xFF) || derived_key[derived_key_length - 1] != (u8)((*pwd_verification) >> 8)) {
         return false;
     }
@@ -199,20 +199,7 @@ int main(int argc, char *argv[]) {
     printf("\n");
     
     // derive key and check password
-    u64 derived_key_length = 2 * key_length + 2;
-    u8 *derived_key = malloc(derived_key_length);
-    PBKDF2_HMAC_SHA1((u8 *)"123456", 6, salt, salt_length, 1000, derived_key_length, derived_key);
-    printf("derived_key_length: %lu\n", derived_key_length);
-    printf("Derived key: ");
-    for (int i = 0; i < derived_key_length; i++)
-        printf("%02x", derived_key[i]);
-    printf("\n");
-    if (derived_key[derived_key_length - 2] != (u8)((*pwd_verification) & 0xFF) || derived_key[derived_key_length - 1] != (u8)((*pwd_verification) >> 8)) {
-        printf("Invalid password\n");
-        return 1;
-    }
-    else
-        printf("Password is correct\n");
+    printf("%d\n",is_valid_key((u8 *)"123456", key_length, salt, salt_length, pwd_verification));
 
     return 0;
 }
