@@ -1,0 +1,8 @@
+{
+    "files.associations": {
+        "struct_stat_time64_helper.h": "c",
+        "stdio.h": "c",
+        "zip.h": "c",
+        "stdint.h": "c"
+    }
+}
