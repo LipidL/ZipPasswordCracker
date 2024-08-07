@@ -7,9 +7,37 @@
 #include <sys/stat.h>
 #include <assert.h>
 #include <stdbool.h>
+#include <pthread.h>
 #include "sha1.h"
 
 #define BLOCK_SIZE 64
+#define MAX_PWD_LENGTH 10
+
+struct thread_data{
+    u16 key_length;
+    u8 *salt;
+    u16 salt_length;
+    u16 pwd_verification;
+    u64 pwd_length; // maximum password length
+    u64 thread_id;
+    char *legal_chars;
+    u64 legal_chars_length;
+};
+
+struct legal_pwds{
+    char pwd[MAX_PWD_LENGTH];
+    u16 pwd_length;
+    struct legal_pwds *next;
+    pthread_mutex_t mutex;
+};
+
+struct pwd_list{
+    struct legal_pwds *first;
+    struct legal_pwds *last;
+    pthread_mutex_t mutex;
+};
+
+struct pwd_list pwd_list = {NULL, NULL, PTHREAD_MUTEX_INITIALIZER};
 
 void HMAC_SHA1(
     unsigned char *key, uint64_t key_length,
@@ -88,14 +116,46 @@ void PBKDF2_HMAC_SHA1(unsigned char *password, uint64_t password_length,
     }
 }
 
-bool is_valid_key(u8 *key, u16 key_length, u8 *salt, u16 salt_length, u16 *pwd_verification) {
+bool is_valid_key(u8 *key, u16 key_length, u8 *salt, u16 salt_length, u16 pwd_verification) {
     u64 derived_key_length = 2 * key_length + 2;
     u8 *derived_key = malloc(derived_key_length);
     PBKDF2_HMAC_SHA1(key, strlen((const char *)key), salt, salt_length, 1000, derived_key_length, derived_key);
-    if (derived_key[derived_key_length - 2] != (u8)((*pwd_verification) & 0xFF) || derived_key[derived_key_length - 1] != (u8)((*pwd_verification) >> 8)) {
+    if (derived_key[derived_key_length - 2] != (u8)((pwd_verification) & 0xFF) || derived_key[derived_key_length - 1] != (u8)((pwd_verification) >> 8)) {
         return false;
     }
     return true;
+}
+
+u8 add(u64 test_pwd_num[MAX_PWD_LENGTH], u64 a, u64 legal_chars_length)
+{
+    // add test_pwd_num by a
+    u8 carry = 0;
+    test_pwd_num[0] = (test_pwd_num[0] + a ) % legal_chars_length;
+    carry = (test_pwd_num[0] + a) / legal_chars_length;
+    for(size_t i = 1; i < MAX_PWD_LENGTH; i++){
+        if(carry == 0)
+            break;
+        test_pwd_num[i] = (test_pwd_num[i] + carry) % legal_chars_length;
+        carry = (test_pwd_num[i] + carry) / legal_chars_length;
+    }
+    return carry;
+}
+
+void num_to_pwd(u64 test_pwd_num[MAX_PWD_LENGTH], char *test_pwd, char *legal_chars)
+{
+    for(size_t i = 0; i < MAX_PWD_LENGTH; i++){
+        if(test_pwd_num[i] == 0){
+            test_pwd[i] = '\0';
+            break;
+        }
+        test_pwd[i] = legal_chars[test_pwd_num[i]];
+    }
+}
+
+void validate_key_thread(struct thread_data data)
+{
+    u64 pwd_length = data.pwd_length;
+    u64 test_pwd_num[MAX_PWD_LENGTH] = {0};
 }
 
 int main(int argc, char *argv[]) {
@@ -199,7 +259,20 @@ int main(int argc, char *argv[]) {
     printf("\n");
     
     // derive key and check password
-    printf("%d\n",is_valid_key((u8 *)"123456", key_length, salt, salt_length, pwd_verification));
+    printf("%d\n",is_valid_key((u8 *)"123456", key_length, salt, salt_length, *pwd_verification));
 
+    // test pwd traversal
+    char *legal_chars = malloc(10 * sizeof(char));
+    for(size_t i = 0; i < 10; i++){
+        legal_chars[i] = '0' + i;
+    }
+    u64 test_pwd_num[MAX_PWD_LENGTH] = {0};
+    char test_pwd[MAX_PWD_LENGTH + 1] = {"\0"};
+    for(size_t i = 0; i < 10000; i++){
+        if(add(test_pwd_num, 1, 10) != 0)
+            break;
+        num_to_pwd(test_pwd_num, test_pwd, legal_chars);
+        printf("%s\n",test_pwd);
+    }
     return 0;
 }
