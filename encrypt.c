@@ -8,6 +8,7 @@
 #include <assert.h>
 #include <stdbool.h>
 #include <pthread.h>
+#include <unistd.h>
 #include <math.h>
 #include "sha1.h"
 
@@ -25,6 +26,12 @@ struct thread_data{
     u64 legal_chars_length;
     u64 thread_id;
     u64 num_threads;
+    u64 *process; // process of this thread, initially 0
+};
+
+struct monitor_data{
+    u64 *process;
+    u64 total_length;
 };
 
 struct legal_pwds{
@@ -196,12 +203,23 @@ void validate_key_thread(struct thread_data *data)
             insert_valid_pwd(test_pwd);
             printf("\033[1;32m valid pwd found: %s  \033[0m \n",test_pwd);
         }
-        else{
-            printf("\033[1;31m invalid pwd: %s  \033[0m \n",test_pwd);
-        }
+        *(data->process) += 1;
         if(add(test_pwd_num, data->num_threads, data->legal_chars_length) != 0){
             return;
         }
+    }
+
+}
+
+void monitor_thread(struct monitor_data *data)
+{
+    while(1){
+        u64 total_process = 0;
+        for(size_t i = 0; i < NUM_THREADS; i++){
+            total_process += data->process[i];
+        }
+        printf("completed %ld of %ld\n", total_process, data->total_length);
+        usleep(100000);
     }
 
 }
@@ -318,6 +336,10 @@ int main(int argc, char *argv[]) {
     // construct threads
     pthread_t threads[NUM_THREADS];
     struct thread_data data[NUM_THREADS];
+    u64 process[NUM_THREADS];
+    for(size_t i = 0; i < NUM_THREADS; i++){
+        process[i] = 0;
+    }
     for (size_t i = 0; i < NUM_THREADS; i++){
         data[i].key_length = key_length;
         data[i].legal_chars = legal_chars;
@@ -328,8 +350,15 @@ int main(int argc, char *argv[]) {
         data[i].salt = salt;
         data[i].salt_length = salt_length;
         data[i].thread_id = i;
+        data[i].process = &(process[i]);
         pthread_create(&threads[i], NULL, (void *)validate_key_thread, &data[i]);
     }
+    struct monitor_data monitor_data;
+    pthread_t monitor;
+    monitor_data.process = process;
+    monitor_data.total_length = (u64) powl(10, 5);
+    pthread_create(&monitor, NULL, (void*) monitor_thread, &monitor_data);
+
     for(size_t i = 0; i < NUM_THREADS; i++){
         pthread_join(threads[i], NULL);
     }
