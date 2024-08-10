@@ -183,7 +183,7 @@ void validate_key_thread(struct thread_data *data)
         test_pwd[i] = '\0';
     }
     // initialize thread pwd
-    if(add(test_pwd_num, data->thread_id, data->legal_chars_length) != 0){
+    if(add(test_pwd_num, data->thread_id + 1, data->legal_chars_length) != 0){
         return;
     }
     long double count = powl(data->legal_chars_length + 1, data->pwd_length) / data->num_threads;
