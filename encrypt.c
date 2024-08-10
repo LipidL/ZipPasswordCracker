@@ -8,6 +8,7 @@
 #include <assert.h>
 #include <stdbool.h>
 #include <pthread.h>
+#include <math.h>
 #include "sha1.h"
 
 #define BLOCK_SIZE 64
@@ -126,12 +127,13 @@ bool is_valid_key(u8 *key, u16 key_length, u8 *salt, u16 salt_length, u16 pwd_ve
     return true;
 }
 
-u8 add(u64 test_pwd_num[MAX_PWD_LENGTH], u64 a, u64 legal_chars_length)
+u8 add(int64_t test_pwd_num[MAX_PWD_LENGTH], u64 a, u64 legal_chars_length)
 {
     // add test_pwd_num by a
     u8 carry = 0;
-    test_pwd_num[0] = (test_pwd_num[0] + a ) % legal_chars_length;
-    carry = (test_pwd_num[0] + a) / legal_chars_length;
+    int64_t add_result = test_pwd_num[0] + a;
+    test_pwd_num[0] = add_result % legal_chars_length;
+    carry = add_result / legal_chars_length;
     for(size_t i = 1; i < MAX_PWD_LENGTH; i++){
         if(carry == 0)
             break;
@@ -141,11 +143,11 @@ u8 add(u64 test_pwd_num[MAX_PWD_LENGTH], u64 a, u64 legal_chars_length)
     return carry;
 }
 
-void num_to_pwd(u64 test_pwd_num[MAX_PWD_LENGTH], char *test_pwd, char *legal_chars)
+void num_to_pwd(int64_t test_pwd_num[MAX_PWD_LENGTH], char *test_pwd, char *legal_chars)
 {
     for(size_t i = 0; i < MAX_PWD_LENGTH; i++){
-        if(test_pwd_num[i] == 0){
-            test_pwd[i] = '\0';
+        test_pwd[i] = '\0';
+        if(test_pwd_num[i] == -1){
             break;
         }
         test_pwd[i] = legal_chars[test_pwd_num[i]];
@@ -266,13 +268,22 @@ int main(int argc, char *argv[]) {
     for(size_t i = 0; i < 10; i++){
         legal_chars[i] = '0' + i;
     }
-    u64 test_pwd_num[MAX_PWD_LENGTH] = {0};
+    int64_t test_pwd_num[MAX_PWD_LENGTH];
+    for (size_t i = 0; i < MAX_PWD_LENGTH; i++){
+        test_pwd_num[i] = -1;
+    }
+    
     char test_pwd[MAX_PWD_LENGTH + 1] = {"\0"};
-    for(size_t i = 0; i < 10000; i++){
+    for(size_t i = 0; i < powl(10, 6); i++){
         if(add(test_pwd_num, 1, 10) != 0)
             break;
         num_to_pwd(test_pwd_num, test_pwd, legal_chars);
-        printf("%s\n",test_pwd);
+        if(is_valid_key((u8 *)test_pwd, key_length, salt, salt_length, *pwd_verification)){
+            printf("\033[1;32m valid pwd found: %s  \033[0m \n",test_pwd);
+        }
+        else{
+            printf("\033[1;31m invalid pwd: %s  \033[0m \n",test_pwd);
+        }
     }
     return 0;
 }

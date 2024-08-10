@@ -1,4 +1,4 @@
-CFLAGS += -O3 -std=gnu11 -ggdb -Wall -Werror -Wno-unused-result -Wno-unused-value -Wno-unused-variable
+CFLAGS += -O0 -std=gnu11 -ggdb -Wall -Werror -Wno-unused-result -Wno-unused-value -Wno-unused-variable
 
 
 all: encrypt.c zip.h
