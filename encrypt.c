@@ -13,6 +13,7 @@
 
 #define BLOCK_SIZE 64
 #define MAX_PWD_LENGTH 10
+#define NUM_THREADS 10
 
 struct thread_data{
     u16 key_length;
@@ -20,9 +21,10 @@ struct thread_data{
     u16 salt_length;
     u16 pwd_verification;
     u64 pwd_length; // maximum password length
-    u64 thread_id;
     char *legal_chars;
     u64 legal_chars_length;
+    u64 thread_id;
+    u64 num_threads;
 };
 
 struct legal_pwds{
@@ -154,10 +156,54 @@ void num_to_pwd(int64_t test_pwd_num[MAX_PWD_LENGTH], char *test_pwd, char *lega
     }
 }
 
-void validate_key_thread(struct thread_data data)
+void insert_valid_pwd(char *pwd)
 {
-    u64 pwd_length = data.pwd_length;
-    u64 test_pwd_num[MAX_PWD_LENGTH] = {0};
+    struct legal_pwds *node = (struct legal_pwds *)malloc(sizeof(struct legal_pwds));
+    strcpy(node->pwd, pwd);
+    node->pwd_length = strlen(pwd);
+    pthread_mutex_init(&(node->mutex), NULL);
+    pthread_mutex_lock(&(pwd_list.mutex));
+    node->next = pwd_list.first;
+    pwd_list.first = node;
+    if (pwd_list.last == NULL){
+        pwd_list.last = node;
+    }
+    pthread_mutex_unlock(&(pwd_list.mutex));
+}
+
+void validate_key_thread(struct thread_data *data)
+{
+    printf("thread %ld created\n", data->thread_id);
+    int64_t test_pwd_num[MAX_PWD_LENGTH];
+    for (size_t i = 0; i < MAX_PWD_LENGTH; i++){
+        test_pwd_num[i] = -1;
+    }
+    char test_pwd[MAX_PWD_LENGTH + 1];
+    for(size_t i = 0; i < MAX_PWD_LENGTH + 1; i++){
+        test_pwd[i] = '\0';
+    }
+    // initialize thread pwd
+    if(add(test_pwd_num, data->thread_id, data->legal_chars_length) != 0){
+        return;
+    }
+    long double count = powl(data->legal_chars_length + 1, data->pwd_length) / data->num_threads;
+    for(size_t i = 0; i < count; i++){
+        num_to_pwd(test_pwd_num, test_pwd, data->legal_chars);
+        if(strlen(test_pwd) > data->pwd_length){
+            return;
+        }
+        if(is_valid_key((u8*)test_pwd, data->key_length, data->salt, data->salt_length, data->pwd_verification)){
+            insert_valid_pwd(test_pwd);
+            printf("\033[1;32m valid pwd found: %s  \033[0m \n",test_pwd);
+        }
+        else{
+            printf("\033[1;31m invalid pwd: %s  \033[0m \n",test_pwd);
+        }
+        if(add(test_pwd_num, data->num_threads, data->legal_chars_length) != 0){
+            return;
+        }
+    }
+
 }
 
 int main(int argc, char *argv[]) {
@@ -261,29 +307,53 @@ int main(int argc, char *argv[]) {
     printf("\n");
     
     // derive key and check password
-    printf("%d\n",is_valid_key((u8 *)"123456", key_length, salt, salt_length, *pwd_verification));
+    printf("%d\n",is_valid_key((u8 *)"54321", key_length, salt, salt_length, *pwd_verification));
 
     // test pwd traversal
     char *legal_chars = malloc(10 * sizeof(char));
     for(size_t i = 0; i < 10; i++){
         legal_chars[i] = '0' + i;
     }
-    int64_t test_pwd_num[MAX_PWD_LENGTH];
-    for (size_t i = 0; i < MAX_PWD_LENGTH; i++){
-        test_pwd_num[i] = -1;
+
+    // construct threads
+    pthread_t threads[NUM_THREADS];
+    struct thread_data data[NUM_THREADS];
+    for (size_t i = 0; i < NUM_THREADS; i++){
+        data[i].key_length = key_length;
+        data[i].legal_chars = legal_chars;
+        data[i].legal_chars_length = 10;
+        data[i].num_threads = NUM_THREADS;
+        data[i].pwd_length = 5;
+        data[i].pwd_verification = *pwd_verification;
+        data[i].salt = salt;
+        data[i].salt_length = salt_length;
+        data[i].thread_id = i;
+        pthread_create(&threads[i], NULL, (void *)validate_key_thread, &data[i]);
     }
+    for(size_t i = 0; i < NUM_THREADS; i++){
+        pthread_join(threads[i], NULL);
+    }
+    struct legal_pwds *node = pwd_list.first;
+    while(node != NULL){
+        printf("possible pwd: %s\n", node->pwd);
+        node = node->next;
+    } 
+    // int64_t test_pwd_num[MAX_PWD_LENGTH];
+    // for (size_t i = 0; i < MAX_PWD_LENGTH; i++){
+    //     test_pwd_num[i] = -1;
+    // }
     
-    char test_pwd[MAX_PWD_LENGTH + 1] = {"\0"};
-    for(size_t i = 0; i < powl(10, 6); i++){
-        if(add(test_pwd_num, 1, 10) != 0)
-            break;
-        num_to_pwd(test_pwd_num, test_pwd, legal_chars);
-        if(is_valid_key((u8 *)test_pwd, key_length, salt, salt_length, *pwd_verification)){
-            printf("\033[1;32m valid pwd found: %s  \033[0m \n",test_pwd);
-        }
-        else{
-            printf("\033[1;31m invalid pwd: %s  \033[0m \n",test_pwd);
-        }
-    }
-    return 0;
+    // char test_pwd[MAX_PWD_LENGTH + 1] = {"\0"};
+    // for(size_t i = 0; i < powl(10, 5); i++){
+    //     if(add(test_pwd_num, 1, 10) != 0)
+    //         break;
+    //     num_to_pwd(test_pwd_num, test_pwd, legal_chars);
+    //     if(is_valid_key((u8 *)test_pwd, key_length, salt, salt_length, *pwd_verification)){
+    //         printf("\033[1;32m valid pwd found: %s  \033[0m \n",test_pwd);
+    //     }
+    //     else{
+    //         printf("\033[1;31m invalid pwd: %s  \033[0m \n",test_pwd);
+    //     }
+    // }
+    // return 0;
 }
