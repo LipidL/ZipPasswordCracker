@@ -370,22 +370,4 @@ int main(int argc, char *argv[]) {
         printf("possible pwd: %s\n", node->pwd);
         node = node->next;
     } 
-    // int64_t test_pwd_num[MAX_PWD_LENGTH];
-    // for (size_t i = 0; i < MAX_PWD_LENGTH; i++){
-    //     test_pwd_num[i] = -1;
-    // }
-    
-    // char test_pwd[MAX_PWD_LENGTH + 1] = {"\0"};
-    // for(size_t i = 0; i < powl(10, 5); i++){
-    //     if(add(test_pwd_num, 1, 10) != 0)
-    //         break;
-    //     num_to_pwd(test_pwd_num, test_pwd, legal_chars);
-    //     if(is_valid_key((u8 *)test_pwd, key_length, salt, salt_length, *pwd_verification)){
-    //         printf("\033[1;32m valid pwd found: %s  \033[0m \n",test_pwd);
-    //     }
-    //     else{
-    //         printf("\033[1;31m invalid pwd: %s  \033[0m \n",test_pwd);
-    //     }
-    // }
-    // return 0;
 }
