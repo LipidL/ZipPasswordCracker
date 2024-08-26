@@ -225,10 +225,12 @@ void monitor_thread(struct monitor_data *data)
 }
 
 int main(int argc, char *argv[]) {
-    if (argc != 2) {
-        printf("Usage: %s <file>\n", argv[0]);
+    if (argc != 3) {
+        printf("Usage: %s <file> <max_pwd_length>\n", argv[0]);
         return 1;
     }
+
+    u16 max_pwd_length = atoi(argv[2]);
     
     struct local_file_header *header;
     struct aes_header *aes_header;
@@ -323,11 +325,12 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < salt_length; i++)
         printf("%02x", salt[i]);
     printf("\n");
-    
-    // derive key and check password
-    printf("%d\n",is_valid_key((u8 *)"54321", key_length, salt, salt_length, *pwd_verification));
+
 
     // test pwd traversal
+
+    // possible pwd: 0123456789
+    u64 legal_chars_length = 10;
     char *legal_chars = malloc(10 * sizeof(char));
     for(size_t i = 0; i < 10; i++){
         legal_chars[i] = '0' + i;
@@ -343,9 +346,9 @@ int main(int argc, char *argv[]) {
     for (size_t i = 0; i < NUM_THREADS; i++){
         data[i].key_length = key_length;
         data[i].legal_chars = legal_chars;
-        data[i].legal_chars_length = 10;
+        data[i].legal_chars_length = legal_chars_length;
         data[i].num_threads = NUM_THREADS;
-        data[i].pwd_length = 5;
+        data[i].pwd_length = max_pwd_length;
         data[i].pwd_verification = *pwd_verification;
         data[i].salt = salt;
         data[i].salt_length = salt_length;
@@ -356,7 +359,7 @@ int main(int argc, char *argv[]) {
     struct monitor_data monitor_data;
     pthread_t monitor;
     monitor_data.process = process;
-    monitor_data.total_length = (u64) powl(10, 5);
+    monitor_data.total_length = ((u64) powl(legal_chars_length, max_pwd_length + 1) - 1) / (legal_chars_length - 1); // /frac{m^{n+1}-1}{m-1} where m=legal_chars_length, n=max_pwd_length
     pthread_create(&monitor, NULL, (void*) monitor_thread, &monitor_data);
 
     for(size_t i = 0; i < NUM_THREADS; i++){

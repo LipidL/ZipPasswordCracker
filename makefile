@@ -5,4 +5,4 @@ all: encrypt.c zip.h
 	gcc -o encrypt encrypt.c $(CFLAGS)
 
 test: encrypt test.zip
-	./encrypt test.zip
+	./encrypt test.zip 6
