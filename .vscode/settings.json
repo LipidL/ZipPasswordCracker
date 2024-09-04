@@ -4,5 +4,6 @@
         "stdio.h": "c",
         "zip.h": "c",
         "stdint.h": "c"
-    }
+    },
+    "C_Cpp.errorSquiggles": "enabledIfIncludesResolve"
 }
