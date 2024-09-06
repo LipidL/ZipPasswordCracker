@@ -146,8 +146,9 @@ u8 add(int64_t test_pwd_num[MAX_PWD_LENGTH], u64 a, u64 legal_chars_length)
     for(size_t i = 1; i < MAX_PWD_LENGTH; i++){
         if(carry == 0)
             break;
-        test_pwd_num[i] = (test_pwd_num[i] + carry) % legal_chars_length;
-        carry = (test_pwd_num[i] + carry) / legal_chars_length;
+        add_result = test_pwd_num[i] + carry;
+        test_pwd_num[i] = add_result % legal_chars_length;
+        carry = add_result / legal_chars_length;
     }
     return carry;
 }
