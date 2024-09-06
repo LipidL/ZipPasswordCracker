@@ -14,7 +14,7 @@
 
 #define BLOCK_SIZE 64
 #define MAX_PWD_LENGTH 64
-#define NUM_THREADS 1024
+#define NUM_THREADS 10
 
 struct thread_data{
     u16 key_length;
@@ -49,7 +49,7 @@ struct pwd_list pwd_list = {NULL, NULL, PTHREAD_MUTEX_INITIALIZER};
 
 __device__ size_t device_strlen(const char *str) {
     size_t len = 0;
-    while (str[len] != '\0') {
+    while (str[len] != '\0' && len <= MAX_PWD_LENGTH) {
         len++;
     }
     return len;
@@ -155,8 +155,9 @@ __device__ u8 add(int64_t test_pwd_num[MAX_PWD_LENGTH], u64 a, u64 legal_chars_l
     for(size_t i = 1; i < MAX_PWD_LENGTH; i++){
         if(carry == 0)
             break;
-        test_pwd_num[i] = (test_pwd_num[i] + carry) % legal_chars_length;
-        carry = (test_pwd_num[i] + carry) / legal_chars_length;
+        add_result = test_pwd_num[i] + carry;
+        test_pwd_num[i] = add_result % legal_chars_length;
+        carry = add_result / legal_chars_length;
     }
     return carry;
 }
@@ -191,9 +192,9 @@ void insert_valid_pwd(char *pwd)
 
 __global__ void validate_key_thread(struct thread_data *data)
 {
-    // printf("thread %ld created\n", data->thread_id);
-    u64 thread_id = blockDim.x * blockIdx.x + threadIdx.x;
+    // identify thread id
     
+    u64 thread_id = blockIdx.x; 
     int64_t test_pwd_num[MAX_PWD_LENGTH];
     for (size_t i = 0; i < MAX_PWD_LENGTH; i++){
         test_pwd_num[i] = -1;
@@ -207,13 +208,11 @@ __global__ void validate_key_thread(struct thread_data *data)
     if(add(test_pwd_num, thread_id + 1, data->legal_chars_length) != 0){
         return;
     }
-    long double count = pow((double)(data->legal_chars_length + 1), (double)data->pwd_length) / data->num_threads;
-    
+    long double count = (pow((double)(data->legal_chars_length), (double)data->pwd_length + 1) - 1) / data->pwd_length / data->num_threads;
     for(size_t i = 0; i < count; i++){
-        
         num_to_pwd(test_pwd_num, test_pwd, data->legal_chars);
-        if(device_strlen(test_pwd) > data->pwd_length){
-            printf("thread %d: test_pwd exceeds pwd_length\n", thread_id);
+        int str_len = device_strlen(test_pwd);
+        if(str_len > data->pwd_length){
             return;
         }
         
@@ -222,7 +221,7 @@ __global__ void validate_key_thread(struct thread_data *data)
             printf("\033[1;32m valid pwd found: %s  \033[0m \n",test_pwd);
         }
         else{
-            printf("invalid pwd: %s\n", test_pwd);
+            printf("invalid pwd: %s from thread %d\n", test_pwd, thread_id);
         }
         if(add(test_pwd_num, data->num_threads, data->legal_chars_length) != 0){
             return;
