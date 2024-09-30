@@ -181,7 +181,7 @@ void insert_valid_pwd(char *pwd)
 
 void validate_key_thread(struct thread_data *data)
 {
-    printf("thread %ld created\n", data->thread_id);
+    // printf("thread %ld created\n", data->thread_id);
     int64_t test_pwd_num[MAX_PWD_LENGTH];
     for (size_t i = 0; i < MAX_PWD_LENGTH; i++){
         test_pwd_num[i] = -1;
@@ -219,7 +219,7 @@ void monitor_thread(struct monitor_data *data)
         for(size_t i = 0; i < NUM_THREADS; i++){
             total_process += data->process[i];
         }
-        printf("completed %ld of %ld\n", total_process, data->total_length);
+        // printf("completed %ld of %ld\n", total_process, data->total_length);
         usleep(100000);
     }
 

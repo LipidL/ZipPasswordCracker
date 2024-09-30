@@ -220,9 +220,9 @@ __global__ void validate_key_thread(struct thread_data *data)
             // insert_valid_pwd(test_pwd);
             printf("\033[1;32m valid pwd found: %s  \033[0m \n",test_pwd);
         }
-        else{
-            printf("invalid pwd: %s from thread %d\n", test_pwd, thread_id);
-        }
+        // else{
+        //     printf("invalid pwd: %s from thread %d\n", test_pwd, thread_id);
+        // }
         if(add(test_pwd_num, data->num_threads, data->legal_chars_length) != 0){
             return;
         }
@@ -286,10 +286,7 @@ int main(int argc, char *argv[]) {
         printf("Invalid compression method\n"); // 0x63 is the AES encryption method (decimal 99)
         return 1;
     }
-    else
-        printf("Compression method: 0x%04x\n", header->compression_method);
     uint64_t offset = sizeof(struct local_file_header) + header->file_name_length; // skip the header and the file name
-    printf("Offset: %lu = %lu + %u\n", offset, sizeof(struct local_file_header), header->file_name_length);
     aes_header = (struct aes_header *)(file + offset);
     if (aes_header->signature != 0x9901) {
         printf("Invalid AES header signature\n");
