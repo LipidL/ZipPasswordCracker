@@ -14,7 +14,6 @@
 
 #define BLOCK_SIZE 64
 #define MAX_PWD_LENGTH 64
-#define NUM_THREADS 10
 
 struct thread_data{
     u16 key_length;
@@ -194,7 +193,8 @@ __global__ void validate_key_thread(struct thread_data *data)
 {
     // identify thread id
     
-    u64 thread_id = blockIdx.x; 
+    u64 thread_id = blockIdx.x * blockDim.x + threadIdx.x; 
+    // printf("thread id: %d start\n", thread_id);
     int64_t test_pwd_num[MAX_PWD_LENGTH];
     for (size_t i = 0; i < MAX_PWD_LENGTH; i++){
         test_pwd_num[i] = -1;
@@ -227,29 +227,17 @@ __global__ void validate_key_thread(struct thread_data *data)
             return;
         }
     }
-
-}
-
-void monitor_thread(struct monitor_data *data)
-{
-    while(1){
-        u64 total_process = 0;
-        for(size_t i = 0; i < NUM_THREADS; i++){
-            total_process += data->process[i];
-        }
-        printf("completed %ld of %ld\n", total_process, data->total_length);
-        usleep(100000);
-    }
-
+    // printf("thread id: %d end\n", thread_id);
 }
 
 int main(int argc, char *argv[]) {
-    if (argc != 3) {
-        printf("Usage: %s <file> <max_pwd_length>\n", argv[0]);
+    if (argc != 4) {
+        printf("Usage: %s <file> <max_pwd_length> <num_of_threads>\n", argv[0]);
         return 1;
     }
 
     u16 max_pwd_length = atoi(argv[2]);
+    u64 num_threads = atoi(argv[3]);
     
     struct local_file_header *header;
     struct aes_header *aes_header;
@@ -356,7 +344,7 @@ int main(int argc, char *argv[]) {
     data.key_length = key_length;
     data.legal_chars = d_legal_chars;
     data.legal_chars_length = legal_chars_length;
-    data.num_threads = NUM_THREADS;
+    data.num_threads = num_threads;
     data.pwd_length = max_pwd_length;
     data.pwd_verification = *pwd_verification;
     data.salt = d_salt;
@@ -368,11 +356,14 @@ int main(int argc, char *argv[]) {
     cudaMemcpy(d_data, &data, sizeof(struct thread_data), cudaMemcpyHostToDevice);
 
     // launch threads
-    validate_key_thread<<<NUM_THREADS, 1>>>(d_data);
+    validate_key_thread<<<num_threads, 1>>>(d_data);
 
     // wait until all threads finish
     cudaDeviceSynchronize();
-
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        printf("CUDA error: %s\n", cudaGetErrorString(err));
+    }
     cudaFree(d_data);
     printf("end\n");
     

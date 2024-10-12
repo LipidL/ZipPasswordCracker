@@ -1,4 +1,4 @@
 encrypt
-test.zip
+*.zip
 *result*
 a.out
