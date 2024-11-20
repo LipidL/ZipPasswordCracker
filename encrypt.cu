@@ -24,6 +24,12 @@ struct thread_data{
     char *legal_chars;
     u64 legal_chars_length;
     u64 num_threads;
+    // address of needed memory block in threads
+    u8 *derived_key; // needed in is_valid_key()
+    u8 *long_salt; // needed in PBKDF2()
+    u8 *first_part_1; // needed in first call to HMAC_SHA1()
+    u8 * first_part_2; // needed in second call to HMAC_SHA1()
+    u8 *second_part; // needed in both calls to HMAC_SHA1()
 };
 
 struct monitor_data{
@@ -57,6 +63,7 @@ __device__ size_t device_strlen(const char *str) {
 __device__ void HMAC_SHA1(
     unsigned char *key, uint64_t key_length,
     unsigned char *data, uint64_t data_length,
+    u8 *first_part, u8 *second_part,
     unsigned char hash[20]) 
 {
 
@@ -82,29 +89,31 @@ __device__ void HMAC_SHA1(
     }
 
     unsigned char first_hash[20];
-    unsigned char *first_part = (unsigned char *)malloc(BLOCK_SIZE + data_length);
+    // unsigned char *first_part = (unsigned char *)malloc(BLOCK_SIZE + data_length);
+    // unsigned char first_part[BLOCK_SIZE + data_length];
     memcpy(first_part, i_key_pad, BLOCK_SIZE);
     memcpy(first_part + BLOCK_SIZE, data, data_length);
 
     sha1(first_part, BLOCK_SIZE + data_length, first_hash);
-    free(first_part);
 
-    unsigned char *second_part = (unsigned char *)malloc(BLOCK_SIZE + 20);
+    // unsigned char *second_part = (unsigned char *)malloc(BLOCK_SIZE + 20);
+    // unsigned char second_part[BLOCK_SIZE + 20];
     memcpy(second_part, o_key_pad, BLOCK_SIZE);
     memcpy(second_part + BLOCK_SIZE, first_hash, 20);
 
     sha1(second_part, BLOCK_SIZE + 20, hash);
-    free(second_part);
 }
 
 __device__ void PBKDF2_HMAC_SHA1(unsigned char *password, uint64_t password_length,
                       unsigned char *salt, uint64_t salt_length,
                       uint64_t iteration_count, uint64_t derived_key_length,
+                      u8 *long_salt, u8 *first_part_1, u8 *first_part_2, u8 *second_part,
                       unsigned char *derived_key) {
     
     u64 i, j, k, blocks;
     u8 hash[20], previous_hash[20], xor_hash[20], salt_ipad[64], salt_opad[64];
-    u8 *long_salt = (u8*)malloc(salt_length + 4);
+    // u8 *long_salt = (u8*)malloc(salt_length + 4);
+    // u8 long_salt[salt_length + 4];
     
     memset(long_salt, 0, salt_length + 4);
     memcpy(long_salt, salt, salt_length);
@@ -116,12 +125,12 @@ __device__ void PBKDF2_HMAC_SHA1(unsigned char *password, uint64_t password_leng
         long_salt[salt_length + 2] = ((i + 1) >> 8) & 0xFF;
         long_salt[salt_length + 3] = (i + 1) & 0xFF;
 
-        HMAC_SHA1(password, password_length, long_salt, salt_length + 4, previous_hash);
+        HMAC_SHA1(password, password_length, long_salt, salt_length + 4, first_part_1, second_part, previous_hash);
 
         memcpy(xor_hash, previous_hash, 20);
 
         for (j = 1; j < iteration_count; j++) {
-            HMAC_SHA1(password, password_length, previous_hash, 20, hash);
+            HMAC_SHA1(password, password_length, previous_hash, 20, first_part_2, second_part, hash);
             memcpy(previous_hash, hash, 20);
 
             for (k = 0; k < 20; k++) {
@@ -133,11 +142,10 @@ __device__ void PBKDF2_HMAC_SHA1(unsigned char *password, uint64_t password_leng
     }
 }
 
-__device__ bool is_valid_key(u8 *key, u16 key_length, u8 *salt, u16 salt_length, u16 pwd_verification) {
+__device__ bool is_valid_key(u8 *key, u16 key_length, u8 *salt, u16 salt_length, u16 pwd_verification, u8 *long_salt, u8 *first_part_1, u8 *first_part_2, u8 *second_part, u8 *derived_key) {
     
     u64 derived_key_length = 2 * key_length + 2;
-    u8 *derived_key = (u8*)malloc(derived_key_length);
-    PBKDF2_HMAC_SHA1(key, device_strlen((const char *)key), salt, salt_length, 1000, derived_key_length, derived_key);
+    PBKDF2_HMAC_SHA1(key, device_strlen((const char *)key), salt, salt_length, 1000, derived_key_length, long_salt, first_part_1, first_part_2, second_part , derived_key);
     if (derived_key[derived_key_length - 2] != (u8)((pwd_verification) & 0xFF) || derived_key[derived_key_length - 1] != (u8)((pwd_verification) >> 8)) {
         return false;
     }
@@ -192,7 +200,6 @@ void insert_valid_pwd(char *pwd)
 __global__ void validate_key_thread(struct thread_data *data)
 {
     // identify thread id
-    
     u64 thread_id = blockIdx.x * blockDim.x + threadIdx.x; 
     // printf("thread id: %d start\n", thread_id);
     int64_t test_pwd_num[MAX_PWD_LENGTH];
@@ -215,8 +222,12 @@ __global__ void validate_key_thread(struct thread_data *data)
         if(str_len > data->pwd_length){
             return;
         }
-        
-        if(is_valid_key((u8*)test_pwd, data->key_length, data->salt, data->salt_length, data->pwd_verification)){
+        u8 *long_salt = data->long_salt + thread_id * (data->salt_length + 4);
+        u8 *first_part_1 = data->first_part_1 + thread_id * (BLOCK_SIZE + data->salt_length + 4);
+        u8 *first_part_2 = data->first_part_2 + thread_id * (BLOCK_SIZE + 20);
+        u8 *second_part = data->second_part + thread_id * (BLOCK_SIZE + 20);
+        u8 * derived_key = data->derived_key + thread_id * (2 * data->key_length + 2);
+        if(is_valid_key((u8*)test_pwd, data->key_length, data->salt, data->salt_length, data->pwd_verification, long_salt, first_part_1, first_part_2, second_part, derived_key)){
             // insert_valid_pwd(test_pwd);
             printf("\033[1;32m valid pwd found: %s  \033[0m \n",test_pwd);
         }
@@ -316,6 +327,9 @@ int main(int argc, char *argv[]) {
     u16 key_length = salt_length * 2;
     u8 *salt = (u8 *)(file + offset + sizeof(struct aes_header));
     u16 *pwd_verification = (u16 *)(salt + salt_length);
+    // print necessary information for debugging
+    printf("salt_length is %d\n", salt_length);
+    printf("key_length is %d\n", key_length);
 
     // copy salt and pwd_verification to device
     u8 *d_salt, *d_pwd_verification;
@@ -338,6 +352,16 @@ int main(int argc, char *argv[]) {
     cudaMalloc((void**)&d_legal_chars, 10 * sizeof(char));
     cudaMemcpy(d_legal_chars, legal_chars, 10 * sizeof(char), cudaMemcpyHostToDevice);
 
+    // allocate necessary memory needed in each thread
+    u8 *d_derived_key, *d_long_salt, *d_first_part_1, *d_first_part_2, *d_second_part;
+    // the memory is needed in each thread, allocate one for each of them
+    // each thread should use [d_derived_key+thread_id*(2*key_length+2), d_derived_key*(thread_id+1)*(2*key_length+2)] region for derived_key
+    cudaMalloc((void**)&d_derived_key, (2 * key_length + 2) * num_threads);
+    cudaMalloc((void**)&d_long_salt, (salt_length + 4) * num_threads);
+    cudaMalloc((void**)&d_first_part_1, (BLOCK_SIZE + salt_length + 4) * num_threads);
+    cudaMalloc((void**)&d_first_part_2, (BLOCK_SIZE + 20) * num_threads);
+    cudaMalloc((void**)&d_second_part, (BLOCK_SIZE + 20) * num_threads);
+
     // construct threads
     struct thread_data data;
 
@@ -349,6 +373,11 @@ int main(int argc, char *argv[]) {
     data.pwd_verification = *pwd_verification;
     data.salt = d_salt;
     data.salt_length = salt_length;
+    data.derived_key = d_derived_key;
+    data.long_salt = d_long_salt;
+    data.first_part_1 = d_first_part_1;
+    data.first_part_2 = d_first_part_2;
+    data.second_part = d_second_part;
 
     // copy data to device
     struct thread_data *d_data;
