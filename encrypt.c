@@ -139,7 +139,7 @@ bool is_valid_key(u8 *key, u16 key_length, u8 *salt, u16 salt_length, u16 pwd_ve
 u8 add(int64_t test_pwd_num[MAX_PWD_LENGTH], u64 a, u64 legal_chars_length)
 {
     // add test_pwd_num by a
-    u8 carry = 0;
+    u64 carry = 0;
     int64_t add_result = test_pwd_num[0] + a;
     test_pwd_num[0] = add_result % legal_chars_length;
     carry = add_result / legal_chars_length;

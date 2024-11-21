@@ -155,7 +155,7 @@ __device__ bool is_valid_key(u8 *key, u16 key_length, u8 *salt, u16 salt_length,
 __device__ u8 add(int64_t test_pwd_num[MAX_PWD_LENGTH], u64 a, u64 legal_chars_length)
 {
     // add test_pwd_num by a
-    u8 carry = 0;
+    u64 carry = 0;
     int64_t add_result = test_pwd_num[0] + a;
     test_pwd_num[0] = add_result % legal_chars_length;
     carry = add_result / legal_chars_length;
@@ -216,6 +216,13 @@ __global__ void validate_key_thread(struct thread_data *data)
     if(add(test_pwd_num, thread_id + 1, data->legal_chars_length) != 0){
         return;
     }
+    long a = 0;
+    for(int i = 0; i < MAX_PWD_LENGTH; i++){
+        if (test_pwd_num[i] == -1)
+            break;
+        a = a * 10 + test_pwd_num[i];
+    }
+    printf("threadID: %d, %ld\n",thread_id, a);
     long double count = (pow((double)(data->legal_chars_length), (double)data->pwd_length + 1) - 1) / data->pwd_length / data->num_threads;
     for(size_t i = 0; i < count; i++){
         num_to_pwd(test_pwd_num, test_pwd, data->legal_chars);
@@ -230,7 +237,7 @@ __global__ void validate_key_thread(struct thread_data *data)
         u8 * derived_key = data->derived_key + thread_id * (2 * data->key_length + 2);
         if(is_valid_key((u8*)test_pwd, data->key_length, data->salt, data->salt_length, data->pwd_verification, long_salt, first_part_1, first_part_2, second_part, derived_key)){
             // insert_valid_pwd(test_pwd);
-            // printf("\033[1;32m valid pwd found: %s  \033[0m \n",test_pwd);
+            printf("\033[1;32m valid pwd found by thread %d: %s  \033[0m \n", thread_id, test_pwd);
         }
         // else{
         //     printf("invalid pwd: %s from thread %d\n", test_pwd, thread_id);
