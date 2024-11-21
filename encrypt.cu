@@ -216,13 +216,6 @@ __global__ void validate_key_thread(struct thread_data *data)
     if(add(test_pwd_num, thread_id + 1, data->legal_chars_length) != 0){
         return;
     }
-    long a = 0;
-    for(int i = 0; i < MAX_PWD_LENGTH; i++){
-        if (test_pwd_num[i] == -1)
-            break;
-        a = a * 10 + test_pwd_num[i];
-    }
-    printf("threadID: %d, %ld\n",thread_id, a);
     long double count = (pow((double)(data->legal_chars_length), (double)data->pwd_length + 1) - 1) / data->pwd_length / data->num_threads;
     for(size_t i = 0; i < count; i++){
         num_to_pwd(test_pwd_num, test_pwd, data->legal_chars);
