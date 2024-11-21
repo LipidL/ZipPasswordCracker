@@ -201,6 +201,7 @@ __global__ void validate_key_thread(struct thread_data *data)
 {
     // identify thread id
     u64 thread_id = blockIdx.x * blockDim.x + threadIdx.x; 
+    assert(thread_id < data->num_threads); // make sure thread_id is valid
     // printf("thread id: %d start\n", thread_id);
     int64_t test_pwd_num[MAX_PWD_LENGTH];
     for (size_t i = 0; i < MAX_PWD_LENGTH; i++){
@@ -229,7 +230,7 @@ __global__ void validate_key_thread(struct thread_data *data)
         u8 * derived_key = data->derived_key + thread_id * (2 * data->key_length + 2);
         if(is_valid_key((u8*)test_pwd, data->key_length, data->salt, data->salt_length, data->pwd_verification, long_salt, first_part_1, first_part_2, second_part, derived_key)){
             // insert_valid_pwd(test_pwd);
-            printf("\033[1;32m valid pwd found: %s  \033[0m \n",test_pwd);
+            // printf("\033[1;32m valid pwd found: %s  \033[0m \n",test_pwd);
         }
         // else{
         //     printf("invalid pwd: %s from thread %d\n", test_pwd, thread_id);
@@ -384,8 +385,17 @@ int main(int argc, char *argv[]) {
     cudaMalloc((void**)&d_data, sizeof(struct thread_data));
     cudaMemcpy(d_data, &data, sizeof(struct thread_data), cudaMemcpyHostToDevice);
 
+    // configure thread and block size
+    dim3 threads_per_block(256,1);
+    dim3 num_blocks(num_threads / threads_per_block.x, 1);
+    printf("num_threads: %ld\n", num_threads);
+    printf("threads_per_block: (%d, %d)\n", threads_per_block.x, threads_per_block.y);
+    printf("num_blocks: (%d, %d)\n", num_blocks.x, num_blocks.y);
+    assert(num_threads % threads_per_block.x == 0);
+    assert(num_threads % threads_per_block.y == 0);
+
     // launch threads
-    validate_key_thread<<<num_threads, 1>>>(d_data);
+    validate_key_thread<<<num_blocks, threads_per_block>>>(d_data);
 
     // wait until all threads finish
     cudaDeviceSynchronize();

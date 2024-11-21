@@ -2,3 +2,6 @@ encrypt
 *.zip
 *result*
 a.out
+.metadata
+*.ncu-rep
+RemoteSystemsTempFiles
