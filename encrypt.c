@@ -14,7 +14,6 @@
 
 #define BLOCK_SIZE 64
 #define MAX_PWD_LENGTH 10
-#define NUM_THREADS 10
 
 struct thread_data{
     u16 key_length;
@@ -32,6 +31,7 @@ struct thread_data{
 struct monitor_data{
     u64 *process;
     u64 total_length;
+    u64 thread_number;
 };
 
 struct legal_pwds{
@@ -216,22 +216,23 @@ void monitor_thread(struct monitor_data *data)
 {
     while(1){
         u64 total_process = 0;
-        for(size_t i = 0; i < NUM_THREADS; i++){
+        for(size_t i = 0; i < data->thread_number; i++){
             total_process += data->process[i];
         }
-        // printf("completed %ld of %ld\n", total_process, data->total_length);
+        printf("completed %ld of %ld\n", total_process, data->total_length);
         usleep(100000);
     }
 
 }
 
 int main(int argc, char *argv[]) {
-    if (argc != 3) {
-        printf("Usage: %s <file> <max_pwd_length>\n", argv[0]);
+    if (argc != 4) {
+        printf("Usage: %s <file> <max_pwd_length> <number_of_threads>\n", argv[0]);
         return 1;
     }
 
     u16 max_pwd_length = atoi(argv[2]);
+    u64 number_of_threads = atoi(argv[3]);
     
     struct local_file_header *header;
     struct aes_header *aes_header;
@@ -338,17 +339,17 @@ int main(int argc, char *argv[]) {
     }
 
     // construct threads
-    pthread_t threads[NUM_THREADS];
-    struct thread_data data[NUM_THREADS];
-    u64 process[NUM_THREADS];
-    for(size_t i = 0; i < NUM_THREADS; i++){
+    pthread_t threads[number_of_threads];
+    struct thread_data data[number_of_threads];
+    u64 process[number_of_threads];
+    for(size_t i = 0; i < number_of_threads; i++){
         process[i] = 0;
     }
-    for (size_t i = 0; i < NUM_THREADS; i++){
+    for (size_t i = 0; i < number_of_threads; i++){
         data[i].key_length = key_length;
         data[i].legal_chars = legal_chars;
         data[i].legal_chars_length = legal_chars_length;
-        data[i].num_threads = NUM_THREADS;
+        data[i].num_threads = number_of_threads;
         data[i].pwd_length = max_pwd_length;
         data[i].pwd_verification = *pwd_verification;
         data[i].salt = salt;
@@ -361,9 +362,10 @@ int main(int argc, char *argv[]) {
     pthread_t monitor;
     monitor_data.process = process;
     monitor_data.total_length = ((u64) powl(legal_chars_length, max_pwd_length + 1) - 1) / (legal_chars_length - 1); // /frac{m^{n+1}-1}{m-1} where m=legal_chars_length, n=max_pwd_length
+    monitor_data.thread_number = number_of_threads;
     pthread_create(&monitor, NULL, (void*) monitor_thread, &monitor_data);
 
-    for(size_t i = 0; i < NUM_THREADS; i++){
+    for(size_t i = 0; i < number_of_threads; i++){
         pthread_join(threads[i], NULL);
     }
     struct legal_pwds *node = pwd_list.first;

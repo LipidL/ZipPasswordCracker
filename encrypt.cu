@@ -202,16 +202,10 @@ __global__ void validate_key_thread(struct thread_data *data)
     // identify thread id
     u64 thread_id = blockIdx.x * blockDim.x + threadIdx.x; 
     assert(thread_id < data->num_threads); // make sure thread_id is valid
-    // printf("thread id: %d start\n", thread_id);
     int64_t test_pwd_num[MAX_PWD_LENGTH];
-    for (size_t i = 0; i < MAX_PWD_LENGTH; i++){
-        test_pwd_num[i] = -1;
-    }
-    
     char test_pwd[MAX_PWD_LENGTH + 1];
-    for(size_t i = 0; i < MAX_PWD_LENGTH + 1; i++){
-        test_pwd[i] = '\0';
-    }
+    memset(test_pwd_num, -1, MAX_PWD_LENGTH * sizeof(int64_t));
+    memset(test_pwd, '\0', MAX_PWD_LENGTH + 1);
     // initialize thread pwd
     if(add(test_pwd_num, thread_id + 1, data->legal_chars_length) != 0){
         return;
@@ -227,19 +221,14 @@ __global__ void validate_key_thread(struct thread_data *data)
         u8 *first_part_1 = data->first_part_1 + thread_id * (BLOCK_SIZE + data->salt_length + 4);
         u8 *first_part_2 = data->first_part_2 + thread_id * (BLOCK_SIZE + 20);
         u8 *second_part = data->second_part + thread_id * (BLOCK_SIZE + 20);
-        u8 * derived_key = data->derived_key + thread_id * (2 * data->key_length + 2);
+        u8 *derived_key = data->derived_key + thread_id * (2 * data->key_length + 2);
         if(is_valid_key((u8*)test_pwd, data->key_length, data->salt, data->salt_length, data->pwd_verification, long_salt, first_part_1, first_part_2, second_part, derived_key)){
-            // insert_valid_pwd(test_pwd);
             printf("\033[1;32m valid pwd found by thread %d: %s  \033[0m \n", thread_id, test_pwd);
         }
-        // else{
-        //     printf("invalid pwd: %s from thread %d\n", test_pwd, thread_id);
-        // }
         if(add(test_pwd_num, data->num_threads, data->legal_chars_length) != 0){
             return;
         }
     }
-    // printf("thread id: %d end\n", thread_id);
 }
 
 int main(int argc, char *argv[]) {
