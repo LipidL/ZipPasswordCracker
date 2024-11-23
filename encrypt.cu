@@ -60,10 +60,10 @@ __device__ size_t device_strlen(const char *str) {
     return len;
 }
 
+template <int DATA_LENGTH>
 __device__ void HMAC_SHA1(
     unsigned char *key, uint64_t key_length,
-    unsigned char *data, uint64_t data_length,
-    u8 *first_part, u8 *second_part,
+    unsigned char *data,
     unsigned char hash[20]) 
 {
 
@@ -90,14 +90,14 @@ __device__ void HMAC_SHA1(
 
     unsigned char first_hash[20];
     // unsigned char *first_part = (unsigned char *)malloc(BLOCK_SIZE + data_length);
-    // unsigned char first_part[BLOCK_SIZE + data_length];
+    unsigned char first_part[BLOCK_SIZE + DATA_LENGTH];
     memcpy(first_part, i_key_pad, BLOCK_SIZE);
-    memcpy(first_part + BLOCK_SIZE, data, data_length);
+    memcpy(first_part + BLOCK_SIZE, data, DATA_LENGTH);
 
-    sha1(first_part, BLOCK_SIZE + data_length, first_hash);
+    sha1(first_part, BLOCK_SIZE + DATA_LENGTH, first_hash);
 
     // unsigned char *second_part = (unsigned char *)malloc(BLOCK_SIZE + 20);
-    // unsigned char second_part[BLOCK_SIZE + 20];
+    unsigned char second_part[BLOCK_SIZE + 20];
     memcpy(second_part, o_key_pad, BLOCK_SIZE);
     memcpy(second_part + BLOCK_SIZE, first_hash, 20);
 
@@ -107,7 +107,7 @@ __device__ void HMAC_SHA1(
 __device__ void PBKDF2_HMAC_SHA1(unsigned char *password, uint64_t password_length,
                       unsigned char *salt, uint64_t salt_length,
                       uint64_t iteration_count, uint64_t derived_key_length,
-                      u8 *long_salt, u8 *first_part_1, u8 *first_part_2, u8 *second_part,
+                      u8 *long_salt,
                       unsigned char *derived_key) {
     
     u64 i, j, k, blocks;
@@ -125,12 +125,26 @@ __device__ void PBKDF2_HMAC_SHA1(unsigned char *password, uint64_t password_leng
         long_salt[salt_length + 2] = ((i + 1) >> 8) & 0xFF;
         long_salt[salt_length + 3] = (i + 1) & 0xFF;
 
-        HMAC_SHA1(password, password_length, long_salt, salt_length + 4, first_part_1, second_part, previous_hash);
+        // HMAC_SHA1(password, password_length, long_salt, salt_length + 4, first_part_1, second_part, previous_hash);
+        switch (salt_length) {
+            case 8:
+                HMAC_SHA1<8 + 4>(password, password_length, long_salt, previous_hash);
+                break;
+            case 12:
+                HMAC_SHA1<12 + 4>(password, password_length, long_salt, previous_hash);
+                break;
+            case 16:
+                HMAC_SHA1<16 + 4>(password, password_length, long_salt, previous_hash);
+                break;
+            default:
+                assert(0); // should never happen
+        }
+
 
         memcpy(xor_hash, previous_hash, 20);
 
         for (j = 1; j < iteration_count; j++) {
-            HMAC_SHA1(password, password_length, previous_hash, 20, first_part_2, second_part, hash);
+            HMAC_SHA1<20>(password, password_length, previous_hash, hash);
             memcpy(previous_hash, hash, 20);
 
             for (k = 0; k < 20; k++) {
@@ -145,7 +159,7 @@ __device__ void PBKDF2_HMAC_SHA1(unsigned char *password, uint64_t password_leng
 __device__ bool is_valid_key(u8 *key, u16 key_length, u8 *salt, u16 salt_length, u16 pwd_verification, u8 *long_salt, u8 *first_part_1, u8 *first_part_2, u8 *second_part, u8 *derived_key) {
     
     u64 derived_key_length = 2 * key_length + 2;
-    PBKDF2_HMAC_SHA1(key, device_strlen((const char *)key), salt, salt_length, 1000, derived_key_length, long_salt, first_part_1, first_part_2, second_part , derived_key);
+    PBKDF2_HMAC_SHA1(key, device_strlen((const char *)key), salt, salt_length, 1000, derived_key_length, long_salt, derived_key);
     if (derived_key[derived_key_length - 2] != (u8)((pwd_verification) & 0xFF) || derived_key[derived_key_length - 1] != (u8)((pwd_verification) >> 8)) {
         return false;
     }
