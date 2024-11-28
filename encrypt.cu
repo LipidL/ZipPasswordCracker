@@ -89,18 +89,14 @@ __device__ void HMAC_SHA1(
     }
 
     unsigned char first_hash[20];
-    // unsigned char *first_part = (unsigned char *)malloc(BLOCK_SIZE + data_length);
     unsigned char first_part[BLOCK_SIZE + DATA_LENGTH];
     memcpy(first_part, i_key_pad, BLOCK_SIZE);
     memcpy(first_part + BLOCK_SIZE, data, DATA_LENGTH);
-
     sha1(first_part, BLOCK_SIZE + DATA_LENGTH, first_hash);
 
-    // unsigned char *second_part = (unsigned char *)malloc(BLOCK_SIZE + 20);
     unsigned char second_part[BLOCK_SIZE + 20];
     memcpy(second_part, o_key_pad, BLOCK_SIZE);
     memcpy(second_part + BLOCK_SIZE, first_hash, 20);
-
     sha1(second_part, BLOCK_SIZE + 20, hash);
 }
 
@@ -112,8 +108,6 @@ __device__ void PBKDF2_HMAC_SHA1(unsigned char *password, uint64_t password_leng
     
     u64 i, j, k, blocks;
     u8 hash[20], previous_hash[20], xor_hash[20], salt_ipad[64], salt_opad[64];
-    // u8 *long_salt = (u8*)malloc(salt_length + 4);
-    // u8 long_salt[salt_length + 4];
     
     memset(long_salt, 0, salt_length + 4);
     memcpy(long_salt, salt, salt_length);
@@ -125,7 +119,6 @@ __device__ void PBKDF2_HMAC_SHA1(unsigned char *password, uint64_t password_leng
         long_salt[salt_length + 2] = ((i + 1) >> 8) & 0xFF;
         long_salt[salt_length + 3] = (i + 1) & 0xFF;
 
-        // HMAC_SHA1(password, password_length, long_salt, salt_length + 4, first_part_1, second_part, previous_hash);
         switch (salt_length) {
             case 8:
                 HMAC_SHA1<8 + 4>(password, password_length, long_salt, previous_hash);
@@ -140,18 +133,15 @@ __device__ void PBKDF2_HMAC_SHA1(unsigned char *password, uint64_t password_leng
                 assert(0); // should never happen
         }
 
-
         memcpy(xor_hash, previous_hash, 20);
 
         for (j = 1; j < iteration_count; j++) {
             HMAC_SHA1<20>(password, password_length, previous_hash, hash);
             memcpy(previous_hash, hash, 20);
-
             for (k = 0; k < 20; k++) {
                 xor_hash[k] ^= hash[k];
             }
         }
-
         memcpy(derived_key + i * 20, xor_hash, (i == blocks - 1 && derived_key_length % 20) ? derived_key_length % 20 : 20);
     }
 }
@@ -408,20 +398,4 @@ int main(int argc, char *argv[]) {
     }
     cudaFree(d_data);
     printf("end\n");
-    
-
-    // struct monitor_data monitor_data;
-    // pthread_t monitor;
-    // monitor_data.process = process;
-    // monitor_data.total_length = ((u64) powl(legal_chars_length, max_pwd_length + 1) - 1) / (legal_chars_length - 1); // /frac{m^{n+1}-1}{m-1} where m=legal_chars_length, n=max_pwd_length
-    // pthread_create(&monitor, NULL, (void* (*)(void*)) monitor_thread, &monitor_data);
-
-    // for(size_t i = 0; i < NUM_THREADS; i++){
-    //     pthread_join(threads[i], NULL);
-    // }
-    // struct legal_pwds *node = pwd_list.first;
-    // while(node != NULL){
-    //     printf("possible pwd: %s\n", node->pwd);
-    //     node = node->next;
-    // } 
 }
