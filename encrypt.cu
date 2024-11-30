@@ -236,13 +236,12 @@ __global__ void validate_key_thread(struct thread_data *data)
 }
 
 int main(int argc, char *argv[]) {
-    if (argc != 4) {
-        printf("Usage: %s <file> <max_pwd_length> <num_of_threads>\n", argv[0]);
+    if (argc != 3) {
+        printf("Usage: %s <file> <max_pwd_length>\n", argv[0]);
         return 1;
     }
 
     u16 max_pwd_length = atoi(argv[2]);
-    u64 num_threads = atoi(argv[3]);
     
     struct local_file_header *header;
     struct aes_header *aes_header;
@@ -325,6 +324,13 @@ int main(int argc, char *argv[]) {
     printf("salt_length is %d\n", salt_length);
     printf("key_length is %d\n", key_length);
 
+    // find the number of GPU's multiprocessors
+    int num_multiprocessors;
+    cudaDeviceGetAttribute(&num_multiprocessors, cudaDevAttrMultiProcessorCount, 0);
+    printf("num_multiprocessors: %d\n", num_multiprocessors);
+    // calculate num_threads based on num_multiprocessors
+    u64 num_threads = num_multiprocessors * 256; // 256 threads per block
+
     // copy salt and pwd_verification to device
     u8 *d_salt, *d_pwd_verification;
     cudaMalloc((void**)&d_salt, salt_length * sizeof(char));
@@ -380,7 +386,7 @@ int main(int argc, char *argv[]) {
 
     // configure thread and block size
     dim3 threads_per_block(256,1);
-    dim3 num_blocks(num_threads / threads_per_block.x, 1);
+    dim3 num_blocks(num_multiprocessors, 1);
     printf("num_threads: %ld\n", num_threads);
     printf("threads_per_block: (%d, %d)\n", threads_per_block.x, threads_per_block.y);
     printf("num_blocks: (%d, %d)\n", num_blocks.x, num_blocks.y);
