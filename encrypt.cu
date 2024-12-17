@@ -107,7 +107,7 @@ __device__ void PBKDF2_HMAC_SHA1(unsigned char *password, uint64_t password_leng
                       unsigned char *derived_key) {
     
     u64 i, j, k, blocks;
-    u8 hash[20], previous_hash[20], xor_hash[20], salt_ipad[64], salt_opad[64];
+    u8 hash[20], previous_hash[20], xor_hash[20];
     
     memset(long_salt, 0, salt_length + 4);
     memcpy(long_salt, salt, salt_length);
@@ -214,7 +214,7 @@ __global__ void validate_key_thread(struct thread_data *data)
     if(add(test_pwd_num, thread_id + 1, data->legal_chars_length) != 0){
         return;
     }
-    long double count = (pow((double)(data->legal_chars_length), (double)data->pwd_length + 1) - 1) / data->pwd_length / data->num_threads;
+    double count = (pow((double)(data->legal_chars_length), (double)data->pwd_length + 1) - 1) / data->pwd_length / data->num_threads;
     for(size_t i = 0; i < count; i++){
         num_to_pwd(test_pwd_num, test_pwd, data->legal_chars);
         int str_len = device_strlen(test_pwd);
@@ -227,7 +227,7 @@ __global__ void validate_key_thread(struct thread_data *data)
         u8 *second_part = data->second_part + thread_id * (BLOCK_SIZE + 20);
         u8 *derived_key = data->derived_key + thread_id * (2 * data->key_length + 2);
         if(is_valid_key((u8*)test_pwd, data->key_length, data->salt, data->salt_length, data->pwd_verification, long_salt, first_part_1, first_part_2, second_part, derived_key)){
-            printf("\033[1;32m valid pwd found by thread %d: %s  \033[0m \n", thread_id, test_pwd);
+            printf("\033[1;32m valid pwd found by thread %ld: %s  \033[0m \n", thread_id, test_pwd);
         }
         if(add(test_pwd_num, data->num_threads, data->legal_chars_length) != 0){
             return;
@@ -279,7 +279,8 @@ int main(int argc, char *argv[]) {
         return 1;
     }
     uint64_t offset = sizeof(struct local_file_header) + header->file_name_length; // skip the header and the file name
-    aes_header = (struct aes_header *)(file + offset);
+    aes_header = (struct aes_header *)((char*)file + offset);   // sizeof(char) is always 1 according to C99 standard
+                                                                // use this to walkaround the pointer arithmetic issue
     if (aes_header->signature != 0x9901) {
         printf("Invalid AES header signature\n");
         return 1;
@@ -299,26 +300,22 @@ int main(int argc, char *argv[]) {
     }
     // extract AES encryption strength
     // AES-128 = 1, AES-192 = 2, AES-256 = 3
-    u16 aes_encryption_strength;
     u8 salt_length;
     switch (aes_header->aes_encryption_strength){
     case 1:
-        aes_encryption_strength = 128;
         salt_length = 8;
         break;
     case 2:
-        aes_encryption_strength = 192;
         salt_length = 12;
         break;
     case 3:
-        aes_encryption_strength = 256;
         salt_length = 16;
         break;
     default:
         assert(0); // should never happen
     }
     u16 key_length = salt_length * 2;
-    u8 *salt = (u8 *)(file + offset + sizeof(struct aes_header));
+    u8 *salt = (u8 *)((char*)file + offset + sizeof(struct aes_header));
     u16 *pwd_verification = (u16 *)(salt + salt_length);
     // print necessary information for debugging
     printf("salt_length is %d\n", salt_length);
