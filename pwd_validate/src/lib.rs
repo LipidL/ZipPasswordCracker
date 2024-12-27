@@ -3,6 +3,7 @@ extern crate zip;
 use libc::{c_char, c_int};
 use zip::ZipArchive;
 use std::fs;
+use std::io;
 
 #[no_mangle]
 pub extern "C" fn volatile_pwd_validate(
@@ -21,13 +22,16 @@ pub extern "C" fn volatile_pwd_validate(
     let mut archive = ZipArchive::new(file).unwrap();
     let mut valid_pwd = 0;
     for i in 0..archive.len() {
-        
-        {
-            if let Ok(_file) = archive.by_index_decrypt(i, password.as_bytes()) {
-                valid_pwd += 1;
-            } else {
-                return valid_pwd;
-            }
+        let mut file = match archive.by_index_decrypt(i, password.as_bytes()) {
+            Ok(file) => file,
+            Err(_) => return -1,
+        };
+        // try to extract the file to buffer
+        let mut buffer = Vec::new();
+        if let Ok(_) = io::copy(&mut file, &mut buffer) {
+            valid_pwd += 1;
+        } else {
+            return valid_pwd;
         }
     }
     valid_pwd
