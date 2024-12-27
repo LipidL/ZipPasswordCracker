@@ -11,9 +11,18 @@
 #include <unistd.h>
 #include <math.h>
 #include "sha1_cu.h"
+#include "rust_wrapper.h"
 
 #define BLOCK_SIZE 64
 #define MAX_PWD_LENGTH 64
+#define PWD_BUFFER_SIZE 1024
+
+// a circular buffer
+typedef struct circular_buffer {
+    char buffer[MAX_PWD_LENGTH][PWD_BUFFER_SIZE];
+    unsigned long long reader; // reader can be larger than PWD_BUFFER_SIZE, the actual reader position is reader % PWD_BUFFER_SIZE
+    unsigned long long writer; // writer can be larger than PWD_BUFFER_SIZE, the actual writer position is writer % PWD_BUFFER_SIZE
+} circular_buffer;
 
 struct thread_data{
     u16 key_length;
@@ -30,27 +39,8 @@ struct thread_data{
     u8 *first_part_1; // needed in first call to HMAC_SHA1()
     u8 * first_part_2; // needed in second call to HMAC_SHA1()
     u8 *second_part; // needed in both calls to HMAC_SHA1()
+    circular_buffer *pwd_buffer; // the buffer to store valid passwords
 };
-
-struct monitor_data{
-    u64 *process;
-    u64 total_length;
-};
-
-struct legal_pwds{
-    char pwd[MAX_PWD_LENGTH];
-    u16 pwd_length;
-    struct legal_pwds *next;
-    pthread_mutex_t mutex;
-};
-
-struct pwd_list{
-    struct legal_pwds *first;
-    struct legal_pwds *last;
-    pthread_mutex_t mutex;
-};
-
-struct pwd_list pwd_list = {NULL, NULL, PTHREAD_MUTEX_INITIALIZER};
 
 __device__ size_t device_strlen(const char *str) {
     size_t len = 0;
@@ -58,6 +48,16 @@ __device__ size_t device_strlen(const char *str) {
         len++;
     }
     return len;
+}
+
+__device__ size_t device_strcpy(char *dest, const char *src) {
+    size_t i = 0;
+    while (src[i] != '\0' && i < MAX_PWD_LENGTH) {
+        dest[i] = src[i];
+        i++;
+    }
+    dest[i] = '\0';
+    return i;
 }
 
 template <int DATA_LENGTH>
@@ -186,21 +186,6 @@ __device__ void num_to_pwd(int64_t test_pwd_num[MAX_PWD_LENGTH], char *test_pwd,
     
 }
 
-void insert_valid_pwd(char *pwd)
-{
-    struct legal_pwds *node = (struct legal_pwds *)malloc(sizeof(struct legal_pwds));
-    strcpy(node->pwd, pwd);
-    node->pwd_length = strlen(pwd);
-    pthread_mutex_init(&(node->mutex), NULL);
-    pthread_mutex_lock(&(pwd_list.mutex));
-    node->next = pwd_list.first;
-    pwd_list.first = node;
-    if (pwd_list.last == NULL){
-        pwd_list.last = node;
-    }
-    pthread_mutex_unlock(&(pwd_list.mutex));
-}
-
 __global__ void validate_key_thread(struct thread_data *data)
 {
     // identify thread id
@@ -227,7 +212,10 @@ __global__ void validate_key_thread(struct thread_data *data)
         u8 *second_part = data->second_part + thread_id * (BLOCK_SIZE + 20);
         u8 *derived_key = data->derived_key + thread_id * (2 * data->key_length + 2);
         if(is_valid_key((u8*)test_pwd, data->key_length, data->salt, data->salt_length, data->pwd_verification, long_salt, first_part_1, first_part_2, second_part, derived_key)){
-            printf("\033[1;32m valid pwd found by thread %ld: %s  \033[0m \n", thread_id, test_pwd);
+            // store valid pwd to buffer
+            unsigned long long writer = atomicAdd(&(data->pwd_buffer->writer), 1); // this function returns the value before increment
+            writer = writer % PWD_BUFFER_SIZE;
+            device_strcpy(data->pwd_buffer->buffer[writer], test_pwd);
         }
         if(add(test_pwd_num, data->num_threads, data->legal_chars_length) != 0){
             return;
@@ -335,6 +323,17 @@ int main(int argc, char *argv[]) {
     cudaMemcpy(d_salt, salt, salt_length * sizeof(char), cudaMemcpyHostToDevice);
     cudaMemcpy(d_pwd_verification, pwd_verification, 2 * sizeof(char), cudaMemcpyHostToDevice);
 
+    // initialize the circular buffer
+    circular_buffer *pwd_buffer;
+    // the circular buffer should be accessible by all threads in the device and host
+    cudaMallocManaged(&pwd_buffer, sizeof(circular_buffer));
+    // initialize the buffer
+    for(size_t i = 0; i < MAX_PWD_LENGTH; i++){
+        memset(pwd_buffer->buffer[i], '\0', PWD_BUFFER_SIZE);
+    }
+    pwd_buffer->reader = 0;
+    pwd_buffer->writer = 0;
+
     // test pwd traversal
 
     // possible pwd: 0123456789
@@ -375,6 +374,7 @@ int main(int argc, char *argv[]) {
     data.first_part_1 = d_first_part_1;
     data.first_part_2 = d_first_part_2;
     data.second_part = d_second_part;
+    data.pwd_buffer = pwd_buffer;
 
     // copy data to device
     struct thread_data *d_data;
@@ -393,8 +393,34 @@ int main(int argc, char *argv[]) {
     // launch threads
     validate_key_thread<<<num_blocks, threads_per_block>>>(d_data);
 
+
     // wait until all threads finish
     cudaDeviceSynchronize();
+
+    // print the result from the buffer
+    while (1) {
+        unsigned long long reader = pwd_buffer->reader % PWD_BUFFER_SIZE;
+        unsigned long long writer = pwd_buffer->writer % PWD_BUFFER_SIZE;
+        if (reader == writer) {
+            continue;
+        }
+        char *pwd = pwd_buffer->buffer[reader];
+        int validate_result = volatile_pwd_validate(argv[1], pwd);
+        if (validate_result == -1) {
+            printf("Error while validating password %s\n", pwd_buffer->buffer[reader]);
+        }
+        else if (validate_result == 0) {
+            printf("Invalid password: %s\n", pwd_buffer->buffer[reader]);
+        }
+        else {
+            printf("Valid password: %s, %d file(s) passed\n", pwd_buffer->buffer[reader], validate_result);
+        }
+        pwd_buffer->reader++;
+        pwd_buffer->reader = pwd_buffer->reader % PWD_BUFFER_SIZE;
+    }
+    
+
+
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
         printf("CUDA error: %s\n", cudaGetErrorString(err));
