@@ -407,13 +407,13 @@ int main(int argc, char *argv[]) {
         char *pwd = pwd_buffer->buffer[reader];
         int validate_result = volatile_pwd_validate(argv[1], pwd);
         if (validate_result == -1) {
-            printf("Error while validating password %s\n", pwd_buffer->buffer[reader]);
+            printf("\033[31mError while validating password %s\033[0m\n", pwd_buffer->buffer[reader]);
         }
         else if (validate_result == 0) {
-            printf("Invalid password: %s\n", pwd_buffer->buffer[reader]);
+            printf("\033[31mInvalid password: %s\033[0m\n", pwd_buffer->buffer[reader]);
         }
         else {
-            printf("Valid password: %s, %d file(s) passed\n", pwd_buffer->buffer[reader], validate_result);
+            printf("\033[32mValid password: %s, %d file(s) passed\033[0m\n", pwd_buffer->buffer[reader], validate_result);
         }
         pwd_buffer->reader++;
         pwd_buffer->reader = pwd_buffer->reader % PWD_BUFFER_SIZE;
