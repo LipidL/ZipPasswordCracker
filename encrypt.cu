@@ -13,9 +13,19 @@
 #include "sha1_cu.h"
 #include "rust_wrapper.h"
 
+#define CHECK_CUDA(call) do { \
+    cudaError_t err = call; \
+    if (err != cudaSuccess) { \
+        fprintf(stderr, "CUDA error in %s at %s:%d: %s\n", \
+            __func__, __FILE__, __LINE__, cudaGetErrorString(err)); \
+        exit(EXIT_FAILURE); \
+    } \
+} while (0)
+
 #define BLOCK_SIZE 64
 #define MAX_PWD_LENGTH 64
-#define PWD_BUFFER_SIZE 1024
+#define PWD_BUFFER_SIZE 64
+#define THREADS_PER_BLOCK 256
 
 // a circular buffer
 typedef struct circular_buffer {
@@ -40,7 +50,7 @@ struct thread_data{
     u8 *first_part_1; // needed in first call to HMAC_SHA1()
     u8 * first_part_2; // needed in second call to HMAC_SHA1()
     u8 *second_part; // needed in both calls to HMAC_SHA1()
-    circular_buffer *pwd_buffer; // the buffer to store valid passwords
+    circular_buffer *pwd_buffer; // pointer to the circular buffer that stores valid passwords
 };
 
 __device__ size_t device_strlen(const char *str) {
@@ -213,12 +223,16 @@ __global__ void validate_key_thread(struct thread_data *data)
         u8 *second_part = data->second_part + thread_id * (BLOCK_SIZE + 20);
         u8 *derived_key = data->derived_key + thread_id * (2 * data->key_length + 2);
         if(is_valid_key((u8*)test_pwd, data->key_length, data->salt, data->salt_length, data->pwd_verification, long_salt, first_part_1, first_part_2, second_part, derived_key)){
+            // figure out the pwd_buffer of this thread
+            circular_buffer *pwd_buffer = &data->pwd_buffer[thread_id];
             // store valid pwd to buffer
-            unsigned long long writer = atomicAdd(&(data->pwd_buffer->writer), 1); // this function returns the value before increment
-            writer = writer % PWD_BUFFER_SIZE;
-            device_strcpy(data->pwd_buffer->buffer[writer], test_pwd);
-            data->pwd_buffer->cpy_complete[writer] = true;
-            printf("valid pwd: %s\n", test_pwd);
+            unsigned long long writer = pwd_buffer->writer;
+            assert(pwd_buffer->cpy_complete[writer] == true); // at this point, buffer should be writable
+            pwd_buffer->cpy_complete[writer] = false;
+            pwd_buffer->writer = (writer + 1) % PWD_BUFFER_SIZE;
+            device_strcpy(pwd_buffer->buffer[writer], test_pwd);
+            pwd_buffer->cpy_complete[writer] = true;
+            printf("thread %ld, valid pwd: %s, current writer is %llu\n",thread_id, test_pwd, pwd_buffer->writer);
         }
         if(add(test_pwd_num, data->num_threads, data->legal_chars_length) != 0){
             return;
@@ -317,7 +331,7 @@ int main(int argc, char *argv[]) {
     cudaDeviceGetAttribute(&num_multiprocessors, cudaDevAttrMultiProcessorCount, 0);
     printf("num_multiprocessors: %d\n", num_multiprocessors);
     // calculate num_threads based on num_multiprocessors
-    u64 num_threads = num_multiprocessors * 256; // 256 threads per block
+    u64 num_threads = num_multiprocessors * THREADS_PER_BLOCK;
 
     // copy salt and pwd_verification to device
     u8 *d_salt, *d_pwd_verification;
@@ -327,16 +341,20 @@ int main(int argc, char *argv[]) {
     cudaMemcpy(d_pwd_verification, pwd_verification, 2 * sizeof(char), cudaMemcpyHostToDevice);
 
     // initialize the circular buffer
-    circular_buffer *pwd_buffer;
-    // the circular buffer should be accessible by all threads in the device and host
-    cudaMallocManaged(&pwd_buffer, sizeof(circular_buffer));
-    // initialize the buffer
-    for(size_t i = 0; i < PWD_BUFFER_SIZE + 1; i++){
-        memset(pwd_buffer->buffer[i], '\0', MAX_PWD_LENGTH + 1);
-        pwd_buffer->cpy_complete[i] = false;
+    printf("initialize circular buffer\n");
+    circular_buffer *cpu_instance;
+    cudaMallocHost(&cpu_instance, num_threads * sizeof(circular_buffer));
+    for (int i = 0; i < num_threads; i++) {
+        cpu_instance[i].reader = 0;
+        cpu_instance[i].writer = 0;
+        for (int j = 0; j < PWD_BUFFER_SIZE; j++) {
+            cpu_instance[i].cpy_complete[j] = true;
+        }
     }
-    pwd_buffer->reader = 0;
-    pwd_buffer->writer = 0;
+    circular_buffer *pwd_buffer;
+    cudaMallocManaged(&pwd_buffer, num_threads * sizeof(circular_buffer));
+    cudaMemcpy(pwd_buffer, cpu_instance, num_threads * sizeof(circular_buffer), cudaMemcpyHostToDevice);
+    printf("circular buffer initialized\n");
 
     // test pwd traversal
 
@@ -386,7 +404,7 @@ int main(int argc, char *argv[]) {
     cudaMemcpy(d_data, &data, sizeof(struct thread_data), cudaMemcpyHostToDevice);
 
     // configure thread and block size
-    dim3 threads_per_block(256,1);
+    dim3 threads_per_block(THREADS_PER_BLOCK,1);
     dim3 num_blocks(num_multiprocessors, 1);
     printf("num_threads: %ld\n", num_threads);
     printf("threads_per_block: (%d, %d)\n", threads_per_block.x, threads_per_block.y);
@@ -396,71 +414,85 @@ int main(int argc, char *argv[]) {
 
     // set up a stream for synchronization
     cudaStream_t compute_stream;
-    cudaStreamCreate(&compute_stream);
+    cudaStreamCreateWithFlags(&compute_stream, cudaStreamNonBlocking);
 
     // launch threads
     validate_key_thread<<<num_blocks, threads_per_block, 0, compute_stream>>>(d_data);
 
     cudaError_t status;
-    unsigned long long cpu_reader = 0; // this is the actual reader maintained by CPU
+    unsigned long long cpu_reader[num_threads] = {0}; // this is the actual reader maintained by CPU
 
     // memcpy in the following loop should happen simutaneously for efficiency
     // issue memcpy in another stream
     cudaStream_t memcpy_stream;
-    cudaStreamCreate(&memcpy_stream);
-    // allocate a pinned circular buffer on CPU
-    circular_buffer *cpu_instance;
-    cudaHostAlloc((void**)&cpu_instance, sizeof(circular_buffer), cudaHostAllocDefault);
+    CHECK_CUDA(cudaStreamCreateWithFlags(&memcpy_stream, cudaStreamNonBlocking));
+    cudaEvent_t memcpy_event;
+    CHECK_CUDA(cudaEventCreate(&memcpy_event));
     // print the result from the buffer
-    while (1) {
+    bool thread_finished[num_threads];
+    for (int i = 0; i < num_threads; i++) {
+        thread_finished[i] = false;
+    }
+    bool all_finished = false;
+    while (!all_finished) {
         // query the execution status of the compute_stream
-        printf("querying stream\n");
         status = cudaStreamQuery(compute_stream);
-        printf("query complete\n");
-        // issue memcpy in memcpy_stream to overlap with the compute_stream
-        cudaMemcpyAsync(cpu_instance, pwd_buffer, sizeof(circular_buffer), cudaMemcpyDeviceToHost, memcpy_stream);
-        printf("memcpy issued\n");
-        // wait for the memcpy to finish
-        cudaStreamSynchronize(memcpy_stream);
-        printf("memcpy completed\n");
-        unsigned long long writer = cpu_instance->writer;
-        printf("writer: %lld\n", writer);
-        printf("cpu_reader: %lld\n", cpu_reader);
-        printf("status: %s\n", cudaGetErrorString(status));
         if ((status != cudaSuccess) && (status != cudaErrorNotReady)) {
             printf("CUDA error: %s\n", cudaGetErrorString(status));
             break;
         }
-        if ((cpu_reader == writer) && (status == cudaSuccess)) {
-            printf("stream finished\n");
-            // when the reader and writer are the same, and the stream is finished, the buffer is empty
-            break;
-        } else if (cpu_reader != writer) {
-            printf("buffer not empty\n");
-            // the buffer is not empty
-            // check if the password has been copied to the buffer
-            if (cpu_instance->cpy_complete[cpu_reader] == false) {
-                // the password has not been copied to the buffer
-                // the buffer is not empty but the password has not been copied to the buffer
+        printf("issue memcpy\n");
+        // issue memcpy in memcpy_stream to overlap with the compute_stream
+        CHECK_CUDA(cudaMemcpyAsync(cpu_instance, pwd_buffer, sizeof(circular_buffer) * num_threads, cudaMemcpyDeviceToHost, memcpy_stream));
+        printf("memcpy issued\n");
+        CHECK_CUDA(cudaEventRecord(memcpy_event, memcpy_stream));
+        printf("memcpy event recorded\n");
+        CHECK_CUDA(cudaStreamWaitEvent(compute_stream, memcpy_event, 0));
+        printf("memcpy event waited\n");
+        // wait for the memcpy to finish
+        cudaStreamSynchronize(memcpy_stream);
+        printf("memcpy completed\n");
+        for (int i = 0; i < num_threads; i++) {
+            circular_buffer *thread_buffer = &cpu_instance[i];
+            unsigned long long writer = thread_buffer->writer;
+            if ((cpu_reader[i] == writer) && (status == cudaSuccess)) {
+                // when the reader and writer are the same, and the stream is finished, the buffer is empty
+                thread_finished[i] = true;
+            } else if (cpu_reader[i] != writer) {
+                // the buffer is not empty
+                // check if the password has been copied to the buffer
+                if (thread_buffer->cpy_complete[cpu_reader[i]] == false) {
+                    // the password has not been copied to the buffer
+                    // the buffer is not empty but the password has not been copied to the buffer
+                    continue;
+                }
+                char *pwd = thread_buffer->buffer[cpu_reader[i]];
+                int validate_result = volatile_pwd_validate(argv[1], pwd);
+                if (validate_result == -1) {
+                    printf("\033[31mError while validating password %s\033[0m\n", thread_buffer->buffer[cpu_reader[i]]);
+                }
+                else if (validate_result == 0) {
+                    printf("\033[31mInvalid password: %s\033[0m\n", thread_buffer->buffer[cpu_reader[i]]);
+                }
+                else {
+                    printf("\033[32mValid password: %s, %d file(s) passed\033[0m\n", thread_buffer->buffer[cpu_reader[i]], validate_result);
+                }
+            cpu_reader[i] ++;
+            } else {
+                // the buffer is empty and the stream is not finished
                 continue;
             }
-            char *pwd = cpu_instance->buffer[cpu_reader];
-            int validate_result = volatile_pwd_validate(argv[1], pwd);
-            if (validate_result == -1) {
-                printf("\033[31mError while validating password %s\033[0m\n", cpu_instance->buffer[cpu_reader]);
-            }
-            else if (validate_result == 0) {
-                printf("\033[31mInvalid password: %s\033[0m\n", cpu_instance->buffer[cpu_reader]);
-            }
-            else {
-                printf("\033[32mValid password: %s, %d file(s) passed\033[0m\n", cpu_instance->buffer[cpu_reader], validate_result);
-            }
-        cpu_reader ++;
-        } else {
-            printf("buffer empty but compute_stream not finished\n");
-            // the buffer is empty and the stream is not finished
-            continue;
         }
+        for (int i = 0; i < num_threads; i++) {
+            if (thread_finished[i] == false) {
+                break;
+            }
+            if (i == num_threads - 1) {
+                printf("All threads finished\n");
+                all_finished = true;
+            }
+        }
+
     }
     
 
