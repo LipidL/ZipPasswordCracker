@@ -27,14 +27,6 @@
 #define PWD_BUFFER_SIZE 64
 #define THREADS_PER_BLOCK 256
 
-// a circular buffer
-typedef struct circular_buffer {
-    char buffer[PWD_BUFFER_SIZE][MAX_PWD_LENGTH + 1]; // buffer to store valid passwords
-    unsigned long long reader; // reader can be larger than PWD_BUFFER_SIZE, the actual reader position is reader % PWD_BUFFER_SIZE
-    unsigned long long writer; // writer can be larger than PWD_BUFFER_SIZE, the actual writer position is writer % PWD_BUFFER_SIZE
-    bool cpy_complete[PWD_BUFFER_SIZE]; // whether the password has been copied to the buffer
-} circular_buffer;
-
 struct thread_data{
     u16 key_length;
     u8 *salt;
@@ -50,7 +42,6 @@ struct thread_data{
     u8 *first_part_1; // needed in first call to HMAC_SHA1()
     u8 * first_part_2; // needed in second call to HMAC_SHA1()
     u8 *second_part; // needed in both calls to HMAC_SHA1()
-    circular_buffer *pwd_buffer; // pointer to the circular buffer that stores valid passwords
 };
 
 __device__ size_t device_strlen(const char *str) {
@@ -223,16 +214,7 @@ __global__ void validate_key_thread(struct thread_data *data)
         u8 *second_part = data->second_part + thread_id * (BLOCK_SIZE + 20);
         u8 *derived_key = data->derived_key + thread_id * (2 * data->key_length + 2);
         if(is_valid_key((u8*)test_pwd, data->key_length, data->salt, data->salt_length, data->pwd_verification, long_salt, first_part_1, first_part_2, second_part, derived_key)){
-            // figure out the pwd_buffer of this thread
-            circular_buffer *pwd_buffer = &data->pwd_buffer[thread_id];
-            // store valid pwd to buffer
-            unsigned long long writer = pwd_buffer->writer;
-            assert(pwd_buffer->cpy_complete[writer] == true); // at this point, buffer should be writable
-            pwd_buffer->cpy_complete[writer] = false;
-            pwd_buffer->writer = (writer + 1) % PWD_BUFFER_SIZE;
-            device_strcpy(pwd_buffer->buffer[writer], test_pwd);
-            pwd_buffer->cpy_complete[writer] = true;
-            printf("thread %ld, valid pwd: %s, current writer is %llu\n",thread_id, test_pwd, pwd_buffer->writer);
+            printf("%s\n",test_pwd);
         }
         if(add(test_pwd_num, data->num_threads, data->legal_chars_length) != 0){
             return;
@@ -242,8 +224,8 @@ __global__ void validate_key_thread(struct thread_data *data)
 
 int main(int argc, char *argv[]) {
     if (argc != 3) {
-        printf("Usage: %s <file> <max_pwd_length>\n", argv[0]);
-        return 1;
+        fprintf(stderr, "Usage: %s <file> <max_pwd_length>\n", argv[0]);
+        exit(EXIT_FAILURE);
     }
 
     u16 max_pwd_length = atoi(argv[2]);
@@ -252,7 +234,7 @@ int main(int argc, char *argv[]) {
     struct aes_header *aes_header;
     
     // open the file
-    printf("Opening file %s\n", argv[1]);
+    fprintf(stderr, "Opening file %s\n", argv[1]);
     int fd = open(argv[1], O_RDONLY);
     if (fd == -1) {
         perror("open");
@@ -268,39 +250,39 @@ int main(int argc, char *argv[]) {
     void *file = mmap(NULL, size, PROT_READ, MAP_PRIVATE, fd, 0);
     header = (struct local_file_header *)file;
     if (header->signature != 0x04034b50) {
-        printf("Invalid signature\n");
+        fprintf(stderr, "Invalid signature\n");
         return 1;
     }
     else
-        printf("Signature: 0x%08x\n", header->signature);
+        fprintf(stderr, "Signature: 0x%08x\n", header->signature);
     if ((header->general_purpose_bit_flag & 0x1) != 0x1) {
-        printf("File is not encrypted\n"); // encrypted files have the first bit set to 1
+        fprintf(stderr, "File is not encrypted\n"); // encrypted files have the first bit set to 1
         return 1;
     }
     else    
-        printf("File is encrypted\n");
+        fprintf(stderr, "File is encrypted\n");
     if (header->compression_method != 0x63) {
-        printf("Invalid compression method\n"); // 0x63 is the AES encryption method (decimal 99)
+        fprintf(stderr, "Invalid compression method\n"); // 0x63 is the AES encryption method (decimal 99)
         return 1;
     }
     uint64_t offset = sizeof(struct local_file_header) + header->file_name_length; // skip the header and the file name
     aes_header = (struct aes_header *)((char*)file + offset);   // sizeof(char) is always 1 according to C99 standard
                                                                 // use this to walkaround the pointer arithmetic issue
     if (aes_header->signature != 0x9901) {
-        printf("Invalid AES header signature\n");
+        fprintf(stderr, "Invalid AES header signature\n");
         return 1;
     }
     if (aes_header->vendor_id[0] != 'A' || aes_header->vendor_id[1] != 'E') {
-        printf("Invalid vendor ID\n");
+        fprintf(stderr, "Invalid vendor ID\n");
         return 1;
     }
     if (aes_header->version_number != 0x0001 && aes_header->version_number != 0x0002){
-        printf("Invalid AES encryption version\n");
+        fprintf(stderr, "Invalid AES encryption version\n");
         return 1;
     }
     u16 version = aes_header->version_number;
     if (version == 2 && header->crc32 ){
-        printf("CRC32 should not present in AES-2 encrypted file\n");
+        fprintf(stderr, "CRC32 should not present in AES-2 encrypted file\n");
         return 1;
     }
     // extract AES encryption strength
@@ -323,13 +305,13 @@ int main(int argc, char *argv[]) {
     u8 *salt = (u8 *)((char*)file + offset + sizeof(struct aes_header));
     u16 *pwd_verification = (u16 *)(salt + salt_length);
     // print necessary information for debugging
-    printf("salt_length is %d\n", salt_length);
-    printf("key_length is %d\n", key_length);
+    fprintf(stderr, "salt_length is %d\n", salt_length);
+    fprintf(stderr, "key_length is %d\n", key_length);
 
     // find the number of GPU's multiprocessors
     int num_multiprocessors;
     cudaDeviceGetAttribute(&num_multiprocessors, cudaDevAttrMultiProcessorCount, 0);
-    printf("num_multiprocessors: %d\n", num_multiprocessors);
+    fprintf(stderr, "num_multiprocessors: %d\n", num_multiprocessors);
     // calculate num_threads based on num_multiprocessors
     u64 num_threads = num_multiprocessors * THREADS_PER_BLOCK;
 
@@ -339,22 +321,6 @@ int main(int argc, char *argv[]) {
     cudaMalloc((void**)&d_pwd_verification, 2 * sizeof(char));
     cudaMemcpy(d_salt, salt, salt_length * sizeof(char), cudaMemcpyHostToDevice);
     cudaMemcpy(d_pwd_verification, pwd_verification, 2 * sizeof(char), cudaMemcpyHostToDevice);
-
-    // initialize the circular buffer
-    printf("initialize circular buffer\n");
-    circular_buffer *cpu_instance;
-    cudaMallocHost(&cpu_instance, num_threads * sizeof(circular_buffer));
-    for (int i = 0; i < num_threads; i++) {
-        cpu_instance[i].reader = 0;
-        cpu_instance[i].writer = 0;
-        for (int j = 0; j < PWD_BUFFER_SIZE; j++) {
-            cpu_instance[i].cpy_complete[j] = true;
-        }
-    }
-    circular_buffer *pwd_buffer;
-    cudaMallocManaged(&pwd_buffer, num_threads * sizeof(circular_buffer));
-    cudaMemcpy(pwd_buffer, cpu_instance, num_threads * sizeof(circular_buffer), cudaMemcpyHostToDevice);
-    printf("circular buffer initialized\n");
 
     // test pwd traversal
 
@@ -396,7 +362,6 @@ int main(int argc, char *argv[]) {
     data.first_part_1 = d_first_part_1;
     data.first_part_2 = d_first_part_2;
     data.second_part = d_second_part;
-    data.pwd_buffer = pwd_buffer;
 
     // copy data to device
     struct thread_data *d_data;
@@ -406,9 +371,9 @@ int main(int argc, char *argv[]) {
     // configure thread and block size
     dim3 threads_per_block(THREADS_PER_BLOCK,1);
     dim3 num_blocks(num_multiprocessors, 1);
-    printf("num_threads: %ld\n", num_threads);
-    printf("threads_per_block: (%d, %d)\n", threads_per_block.x, threads_per_block.y);
-    printf("num_blocks: (%d, %d)\n", num_blocks.x, num_blocks.y);
+    fprintf(stderr, "num_threads: %ld\n", num_threads);
+    fprintf(stderr,"threads_per_block: (%d, %d)\n", threads_per_block.x, threads_per_block.y);
+    fprintf(stderr, "num_blocks: (%d, %d)\n", num_blocks.x, num_blocks.y);
     assert(num_threads % threads_per_block.x == 0);
     assert(num_threads % threads_per_block.y == 0);
 
@@ -419,88 +384,13 @@ int main(int argc, char *argv[]) {
     // launch threads
     validate_key_thread<<<num_blocks, threads_per_block, 0, compute_stream>>>(d_data);
 
-    cudaError_t status;
-    unsigned long long cpu_reader[num_threads] = {0}; // this is the actual reader maintained by CPU
-
-    // memcpy in the following loop should happen simutaneously for efficiency
-    // issue memcpy in another stream
-    cudaStream_t memcpy_stream;
-    CHECK_CUDA(cudaStreamCreateWithFlags(&memcpy_stream, cudaStreamNonBlocking));
-    cudaEvent_t memcpy_event;
-    CHECK_CUDA(cudaEventCreate(&memcpy_event));
-    // print the result from the buffer
-    bool thread_finished[num_threads];
-    for (int i = 0; i < num_threads; i++) {
-        thread_finished[i] = false;
-    }
-    bool all_finished = false;
-    while (!all_finished) {
-        // query the execution status of the compute_stream
-        status = cudaStreamQuery(compute_stream);
-        if ((status != cudaSuccess) && (status != cudaErrorNotReady)) {
-            printf("CUDA error: %s\n", cudaGetErrorString(status));
-            break;
-        }
-        printf("issue memcpy\n");
-        // issue memcpy in memcpy_stream to overlap with the compute_stream
-        CHECK_CUDA(cudaMemcpyAsync(cpu_instance, pwd_buffer, sizeof(circular_buffer) * num_threads, cudaMemcpyDeviceToHost, memcpy_stream));
-        printf("memcpy issued\n");
-        CHECK_CUDA(cudaEventRecord(memcpy_event, memcpy_stream));
-        printf("memcpy event recorded\n");
-        CHECK_CUDA(cudaStreamWaitEvent(compute_stream, memcpy_event, 0));
-        printf("memcpy event waited\n");
-        // wait for the memcpy to finish
-        cudaStreamSynchronize(memcpy_stream);
-        printf("memcpy completed\n");
-        for (int i = 0; i < num_threads; i++) {
-            circular_buffer *thread_buffer = &cpu_instance[i];
-            unsigned long long writer = thread_buffer->writer;
-            if ((cpu_reader[i] == writer) && (status == cudaSuccess)) {
-                // when the reader and writer are the same, and the stream is finished, the buffer is empty
-                thread_finished[i] = true;
-            } else if (cpu_reader[i] != writer) {
-                // the buffer is not empty
-                // check if the password has been copied to the buffer
-                if (thread_buffer->cpy_complete[cpu_reader[i]] == false) {
-                    // the password has not been copied to the buffer
-                    // the buffer is not empty but the password has not been copied to the buffer
-                    continue;
-                }
-                char *pwd = thread_buffer->buffer[cpu_reader[i]];
-                int validate_result = volatile_pwd_validate(argv[1], pwd);
-                if (validate_result == -1) {
-                    printf("\033[31mError while validating password %s\033[0m\n", thread_buffer->buffer[cpu_reader[i]]);
-                }
-                else if (validate_result == 0) {
-                    printf("\033[31mInvalid password: %s\033[0m\n", thread_buffer->buffer[cpu_reader[i]]);
-                }
-                else {
-                    printf("\033[32mValid password: %s, %d file(s) passed\033[0m\n", thread_buffer->buffer[cpu_reader[i]], validate_result);
-                }
-            cpu_reader[i] ++;
-            } else {
-                // the buffer is empty and the stream is not finished
-                continue;
-            }
-        }
-        for (int i = 0; i < num_threads; i++) {
-            if (thread_finished[i] == false) {
-                break;
-            }
-            if (i == num_threads - 1) {
-                printf("All threads finished\n");
-                all_finished = true;
-            }
-        }
-
-    }
-    
-
+    // synchronize
+    cudaDeviceSynchronize();
 
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
-        printf("CUDA error: %s\n", cudaGetErrorString(err));
+        fprintf(stderr, "CUDA error: %s\n", cudaGetErrorString(err));
     }
     cudaFree(d_data);
-    printf("end\n");
+    fprintf(stderr, "end\n");
 }

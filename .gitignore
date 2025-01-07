@@ -8,3 +8,4 @@ RemoteSystemsTempFiles
 encrypt_cu
 pwd_validate/target
 pwd_validate/Cargo.lock
+cracker_*

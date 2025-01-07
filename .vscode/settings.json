@@ -3,7 +3,9 @@
         "struct_stat_time64_helper.h": "c",
         "stdio.h": "c",
         "zip.h": "c",
-        "stdint.h": "c"
+        "stdint.h": "c",
+        "unistd.h": "c",
+        "rust_wrapper.h": "c"
     },
     "C_Cpp.errorSquiggles": "enabledIfIncludesResolve"
 }
