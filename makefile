@@ -21,4 +21,4 @@ gpu: encrypt.cu *.h pwd_validate/src/*
 # compile the CUDA code
 	$(CUDACOMPILER) -o encrypt_cu encrypt.cu $(CUDAFLAGS) $(LDFLAGS)
 # compile the pipeline code
-	$(CCOMPILER) -o cracker_cuda encrypt.c $(CFLAGS) $(LDFLAGS)
+	$(CCOMPILER) -o cracker_cuda pipelined_cuda.c $(CFLAGS) $(LDFLAGS)
