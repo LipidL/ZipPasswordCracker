@@ -8,7 +8,8 @@ Welcome to ZipPasswordCracker, a powerful tool designed to crack passwords of en
 + **Customizable password length**: Set a custom maximum length for the passwords to be tried.
 + **Support for numeric passwords**: Capable of cracking passwords composed solely of numbers.
 + **AES encryption compatibility**: Works with zip files encrypted using the AES encryption method.
-+ **CUDA support**: To leverage the power of GPU for faster password cracking.
++ **CUDA support**: Leverage the power of GPU for faster password cracking.
++ **Simutaneous CPU validation**: Use pipeline to enable CPU to validate passwords simutaneously, improving efficiency.
 
 ## Future Enhancements
 
