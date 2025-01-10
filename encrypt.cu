@@ -11,8 +11,8 @@
 #include <unistd.h>
 #include <math.h>
 #include "sha1_cu.h"
-#include "rust_wrapper.h"
 
+#ifdef DEBUG
 #define CHECK_CUDA(call) do { \
     cudaError_t err = call; \
     if (err != cudaSuccess) { \
@@ -21,6 +21,11 @@
         exit(EXIT_FAILURE); \
     } \
 } while (0)
+#else
+#define CHECK_CUDA(call) call
+#endif
+
+#define debug(...) fprintf(stderr, __VA_ARGS__)
 
 #define BLOCK_SIZE 64
 #define MAX_PWD_LENGTH 64
@@ -50,16 +55,6 @@ __device__ size_t device_strlen(const char *str) {
         len++;
     }
     return len;
-}
-
-__device__ size_t device_strcpy(char *dest, const char *src) {
-    size_t i = 0;
-    while (src[i] != '\0' && i < MAX_PWD_LENGTH) {
-        dest[i] = src[i];
-        i++;
-    }
-    dest[i] = '\0';
-    return i;
 }
 
 template <int DATA_LENGTH>
@@ -224,7 +219,7 @@ __global__ void validate_key_thread(struct thread_data *data)
 
 int main(int argc, char *argv[]) {
     if (argc != 3) {
-        fprintf(stderr, "Usage: %s <file> <max_pwd_length>\n", argv[0]);
+        debug("Usage: %s <file> <max_pwd_length>\n", argv[0]);
         exit(EXIT_FAILURE);
     }
 
@@ -238,52 +233,52 @@ int main(int argc, char *argv[]) {
     int fd = open(argv[1], O_RDONLY);
     if (fd == -1) {
         perror("open");
-        return 1;
+        exit(EXIT_FAILURE);
     }
     // get file size
     struct stat st;
     if (fstat(fd, &st) == -1) {
         perror("fstat");
-        return 1;
+        exit(EXIT_FAILURE);
     }
     off_t size = st.st_size;
     void *file = mmap(NULL, size, PROT_READ, MAP_PRIVATE, fd, 0);
     header = (struct local_file_header *)file;
     if (header->signature != 0x04034b50) {
-        fprintf(stderr, "Invalid signature\n");
-        return 1;
+        debug("Invalid signature\n");
+        exit(EXIT_FAILURE);
     }
     else
-        fprintf(stderr, "Signature: 0x%08x\n", header->signature);
+        debug("Signature: 0x%08x\n", header->signature);
     if ((header->general_purpose_bit_flag & 0x1) != 0x1) {
-        fprintf(stderr, "File is not encrypted\n"); // encrypted files have the first bit set to 1
-        return 1;
+        debug("File is not encrypted\n"); // encrypted files have the first bit set to 1
+        exit(EXIT_FAILURE);
     }
     else    
-        fprintf(stderr, "File is encrypted\n");
+        debug("File is encrypted\n");
     if (header->compression_method != 0x63) {
-        fprintf(stderr, "Invalid compression method\n"); // 0x63 is the AES encryption method (decimal 99)
-        return 1;
+        debug("Invalid compression method\n"); // 0x63 is the AES encryption method (decimal 99)
+        exit(EXIT_FAILURE);
     }
     uint64_t offset = sizeof(struct local_file_header) + header->file_name_length; // skip the header and the file name
     aes_header = (struct aes_header *)((char*)file + offset);   // sizeof(char) is always 1 according to C99 standard
                                                                 // use this to walkaround the pointer arithmetic issue
     if (aes_header->signature != 0x9901) {
-        fprintf(stderr, "Invalid AES header signature\n");
-        return 1;
+        debug("Invalid AES header signature\n");
+        exit(EXIT_FAILURE);
     }
     if (aes_header->vendor_id[0] != 'A' || aes_header->vendor_id[1] != 'E') {
-        fprintf(stderr, "Invalid vendor ID\n");
-        return 1;
+        debug("Invalid vendor ID\n");
+        exit(EXIT_FAILURE);
     }
     if (aes_header->version_number != 0x0001 && aes_header->version_number != 0x0002){
-        fprintf(stderr, "Invalid AES encryption version\n");
-        return 1;
+        debug("Invalid AES encryption version\n");
+        exit(EXIT_FAILURE);
     }
     u16 version = aes_header->version_number;
     if (version == 2 && header->crc32 ){
-        fprintf(stderr, "CRC32 should not present in AES-2 encrypted file\n");
-        return 1;
+        debug("CRC32 should not present in AES-2 encrypted file\n");
+        exit(EXIT_FAILURE);
     }
     // extract AES encryption strength
     // AES-128 = 1, AES-192 = 2, AES-256 = 3
@@ -305,13 +300,13 @@ int main(int argc, char *argv[]) {
     u8 *salt = (u8 *)((char*)file + offset + sizeof(struct aes_header));
     u16 *pwd_verification = (u16 *)(salt + salt_length);
     // print necessary information for debugging
-    fprintf(stderr, "salt_length is %d\n", salt_length);
-    fprintf(stderr, "key_length is %d\n", key_length);
+    debug("salt_length is %d\n", salt_length);
+    debug("key_length is %d\n", key_length);
 
     // find the number of GPU's multiprocessors
     int num_multiprocessors;
     cudaDeviceGetAttribute(&num_multiprocessors, cudaDevAttrMultiProcessorCount, 0);
-    fprintf(stderr, "num_multiprocessors: %d\n", num_multiprocessors);
+    debug("num_multiprocessors: %d\n", num_multiprocessors);
     // calculate num_threads based on num_multiprocessors
     u64 num_threads = num_multiprocessors * THREADS_PER_BLOCK;
 
@@ -371,26 +366,23 @@ int main(int argc, char *argv[]) {
     // configure thread and block size
     dim3 threads_per_block(THREADS_PER_BLOCK,1);
     dim3 num_blocks(num_multiprocessors, 1);
-    fprintf(stderr, "num_threads: %ld\n", num_threads);
-    fprintf(stderr,"threads_per_block: (%d, %d)\n", threads_per_block.x, threads_per_block.y);
-    fprintf(stderr, "num_blocks: (%d, %d)\n", num_blocks.x, num_blocks.y);
+    debug("num_threads: %ld\n", num_threads);
+    debug("threads_per_block: (%d, %d)\n", threads_per_block.x, threads_per_block.y);
+    debug("num_blocks: (%d, %d)\n", num_blocks.x, num_blocks.y);
     assert(num_threads % threads_per_block.x == 0);
     assert(num_threads % threads_per_block.y == 0);
 
-    // set up a stream for synchronization
-    cudaStream_t compute_stream;
-    cudaStreamCreateWithFlags(&compute_stream, cudaStreamNonBlocking);
-
     // launch threads
-    validate_key_thread<<<num_blocks, threads_per_block, 0, compute_stream>>>(d_data);
+    validate_key_thread<<<num_blocks, threads_per_block>>>(d_data);
 
     // synchronize
     cudaDeviceSynchronize();
 
     cudaError_t err = cudaGetLastError();
     if (err != cudaSuccess) {
-        fprintf(stderr, "CUDA error: %s\n", cudaGetErrorString(err));
+        debug("CUDA error: %s\n", cudaGetErrorString(err));
     }
     cudaFree(d_data);
-    fprintf(stderr, "end\n");
+    debug("end\n");
+    exit(EXIT_SUCCESS);
 }
