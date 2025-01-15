@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include <math.h>
 #include "sha1_cu.h"
+#include "toml.hpp"
 
 #ifdef DEBUG
 #define CHECK_CUDA(call) do { \
@@ -218,19 +219,33 @@ __global__ void validate_key_thread(struct thread_data *data)
 }
 
 int main(int argc, char *argv[]) {
-    if (argc != 3) {
-        debug("Usage: %s <file> <max_pwd_length>\n", argv[0]);
-        exit(EXIT_FAILURE);
-    }
-
-    u16 max_pwd_length = atoi(argv[2]);
+    // read config.toml
+    toml::value config = toml::parse("config.toml");
+    // parse the [file] table
+    const toml::value &file_table = toml::find(config, "file");
+    const std::string &file_format = toml::find<std::string>(file_table, "format");
+    debug("file format: %s\n", file_format.c_str());
+    assert(file_format == "zip"); // now we only support zip format
+    const std::string &file_path = toml::find<std::string>(file_table, "path");
+    debug("file path: %s\n", file_path.c_str());
+    const std::string &encrypt_method = toml::find<std::string>(file_table, "encrypt_method");
+    debug("encrypt method: %s\n", encrypt_method.c_str());
+    assert(encrypt_method == "AES"); // now we only support AES encryption
+    // parse the [password] table
+    const toml::value &password_table = toml::find(config, "password");
+    const bool digit = toml::find<bool>(password_table, "digit");
+    const bool lower = toml::find<bool>(password_table, "lower");
+    const bool upper = toml::find<bool>(password_table, "upper");
+    const bool special = toml::find<bool>(password_table, "special");
+    const u64 max_pwd_length = toml::find<u64>(password_table, "length");
+    debug("digit: %d\n", digit);
     
     struct local_file_header *header;
     struct aes_header *aes_header;
     
     // open the file
-    fprintf(stderr, "Opening file %s\n", argv[1]);
-    int fd = open(argv[1], O_RDONLY);
+    fprintf(stderr, "Opening file %s\n", file_path.c_str());
+    int fd = open(file_path.c_str(), O_RDONLY);
     if (fd == -1) {
         perror("open");
         exit(EXIT_FAILURE);
@@ -317,19 +332,56 @@ int main(int argc, char *argv[]) {
     cudaMemcpy(d_salt, salt, salt_length * sizeof(char), cudaMemcpyHostToDevice);
     cudaMemcpy(d_pwd_verification, pwd_verification, 2 * sizeof(char), cudaMemcpyHostToDevice);
 
-    // test pwd traversal
-
     // possible pwd: 0123456789
-    u64 legal_chars_length = 10;
-    char *legal_chars = (char*)malloc(10 * sizeof(char));
-    for(size_t i = 0; i < 10; i++){
-        legal_chars[i] = '0' + i;
+    u64 legal_chars_length = 0;
+    if (digit) {
+        legal_chars_length += 10;
+    }
+    if (lower) {
+        legal_chars_length += 26;
+    }
+    if (upper) {
+        legal_chars_length += 26;
+    }
+    if (special) {
+        legal_chars_length += 33;
+    }
+    char *legal_chars = (char*)malloc(legal_chars_length * sizeof(char));
+    u64 index = 0;
+    if (digit) {
+        for (char c = '0'; c <= '9'; c++) {
+            legal_chars[index++] = c;
+        }
+    }
+    if (lower) {
+        for (char c = 'a'; c <= 'z'; c++) {
+            legal_chars[index++] = c;
+        }
+    }
+    if (upper) {
+        for (char c = 'A'; c <= 'Z'; c++) {
+            legal_chars[index++] = c;
+        }
+    }
+    if (special) {
+        for (char c = '!'; c <= '/'; c++) {
+            legal_chars[index++] = c;
+        }
+        for (char c = ':'; c <= '@'; c++) {
+            legal_chars[index++] = c;
+        }
+        for (char c = '['; c <= '`'; c++) {
+            legal_chars[index++] = c;
+        }
+        for (char c = '{'; c <= '~'; c++) {
+            legal_chars[index++] = c;
+        }
     }
 
     // copy legal_chars to device
     char *d_legal_chars;
-    cudaMalloc((void**)&d_legal_chars, 10 * sizeof(char));
-    cudaMemcpy(d_legal_chars, legal_chars, 10 * sizeof(char), cudaMemcpyHostToDevice);
+    cudaMalloc((void**)&d_legal_chars, legal_chars_length * sizeof(char));
+    cudaMemcpy(d_legal_chars, legal_chars, legal_chars_length * sizeof(char), cudaMemcpyHostToDevice);
 
     // allocate necessary memory needed in each thread
     u8 *d_derived_key, *d_long_salt, *d_first_part_1, *d_first_part_2, *d_second_part;

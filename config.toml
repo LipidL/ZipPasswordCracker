@@ -1,0 +1,10 @@
+[file]
+format = "zip"
+path = "test.zip"
+encrypt_method = "AES"
+[password]
+digit = true
+lower = true
+upper = false
+special = false
+length = 6
