@@ -1,3 +1,12 @@
+/* 
+This CUDA algorithm is inspired by the `zip` crate from Rust.
+The algorithm design and validation logic draw inspiration from the `zip` crate.
+The `zip` crate can be found at https://crates.org.cn/crates/zip
+
+The CUDA implementation here is original and written by LipidL.
+*/
+
+
 #include "zip.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -332,7 +341,7 @@ int main(int argc, char *argv[]) {
     cudaMemcpy(d_salt, salt, salt_length * sizeof(char), cudaMemcpyHostToDevice);
     cudaMemcpy(d_pwd_verification, pwd_verification, 2 * sizeof(char), cudaMemcpyHostToDevice);
 
-    // possible pwd: 0123456789
+    // initialize legal_chars and legal_chars_length
     u64 legal_chars_length = 0;
     if (digit) {
         legal_chars_length += 10;

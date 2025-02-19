@@ -1,3 +1,10 @@
+/*
+This program uses `toml11` to parse the `config.toml` file and read the file path and encryption method.
+Then it forks itself and the child process runs the `encrypt_cu` program to generate the password.
+The parent process reads the output from the child process and validates the password.
+The output is colored in green if the password is valid and red if the password is invalid.
+*/
+
 #include <stdio.h>
 #include "rust_wrapper.h"
 #include <unistd.h>
@@ -13,7 +20,7 @@ int main(int argc, char *argv[]) {
     // debug("program start\n");
     if ((argc > 2) || ((argc == 2) && (strcmp(argv[1], "init") != 0) && (strcmp(argv[1], "default") != 0))) {
         debug("Usage: %s [default | init]\n", argv[0]);
-        debug("%s : start parsing by using config.toml\n",argv[0]);
+        debug("%s: start parsing by using config.toml\n",argv[0]);
         debug("%s default: write a default config.toml and start cracking using the default configuration\n",argv[0]);
         debug("%s init: write a default config.toml and quit\n",argv[0]);
         exit(EXIT_FAILURE);
