@@ -59,6 +59,14 @@ struct thread_data{
     u8 *second_part; // needed in both calls to HMAC_SHA1()
 };
 
+/**
+ * @brief Calculate the length of a string
+ * 
+ * @param str The string to calculate the length of
+ * @return The length of the string
+ * 
+ * @note The length of the string is calculated by counting the number of characters until the null terminator is reached.
+ */
 __device__ size_t device_strlen(const char *str) {
     size_t len = 0;
     while (str[len] != '\0' && len <= MAX_PWD_LENGTH) {
@@ -67,8 +75,19 @@ __device__ size_t device_strlen(const char *str) {
     return len;
 }
 
-template <int DATA_LENGTH>
-__device__ void HMAC_SHA1(
+/**
+ * @brief Calculate the Message Authentication Code (MAC) using the HMAC-SHA1 algorithm
+ * 
+ * @param key The key to use in the HMAC-SHA1 algorithm
+ * @param key_length The length of the key
+ * @param data The data to use in the HMAC-SHA1 algorithm
+ * @param hash The resulting hash from the HMAC-SHA1 algorithm
+ * 
+ * @return void
+ * 
+ * @note this function is a template function, specify the length of the data when calling it
+ */
+template <int DATA_LENGTH> __device__ void HMAC_SHA1(
     unsigned char *key, uint64_t key_length,
     unsigned char *data,
     unsigned char hash[20]) 
@@ -107,6 +126,23 @@ __device__ void HMAC_SHA1(
     sha1(second_part, BLOCK_SIZE + 20, hash);
 }
 
+/**
+ * @brief Calculate the Password-Based Key Derivation Function 2 (PBKDF2) using the HMAC-SHA1 algorithm
+ * 
+ * @param password The password to use in the PBKDF2 algorithm
+ * @param password_length The length of the password
+ * @param salt The salt to use in the PBKDF2 algorithm
+ * @param salt_length The length of the salt
+ * @param iteration_count The number of iterations to use in the PBKDF2 algorithm
+ * @param derived_key_length The length of the derived key
+ * @param long_salt The space for saving the long salt while calculation
+ * @param derived_key The resulting derived key from the PBKDF2 algorithm
+ * 
+ * @return void
+ * 
+ * @note the `long_salt` and `derived_key` region is modified in this function. `derived_key` is the final result, `long_salt` is used to store the variables during computation
+ * @note the `long_salt` region is passed in as argument because allocation on device is prohibited on CUDA
+ */
 __device__ void PBKDF2_HMAC_SHA1(unsigned char *password, uint64_t password_length,
                       unsigned char *salt, uint64_t salt_length,
                       uint64_t iteration_count, uint64_t derived_key_length,
@@ -153,6 +189,25 @@ __device__ void PBKDF2_HMAC_SHA1(unsigned char *password, uint64_t password_leng
     }
 }
 
+/**
+ * @brief Check if a key is valid
+ * 
+ * @param key The key to check
+ * @param key_length The length of the key
+ * @param salt The salt to use in the PBKDF2 algorithm
+ * @param salt_length The length of the salt
+ * @param pwd_verification The password verification value
+ * @param long_salt The region allocated for computing PBKDF2
+ * @param first_part_1 The region allocated for computing HMAC_SHA1
+ * @param first_part_2 The region allocated for computing HMAC_SHA1
+ * @param second_part The region allocated for computing HMAC_SHA1
+ * @param derived_key The derived key from the PBKDF2 algorithm
+ * 
+ * @return true if the key is valid, false otherwise
+ * 
+ * @note the `long_salt`, `first_part_1`, `first_part_2`, `second_part`, and `derived_key` regions are modified in this function, but their values is useless after the function returns
+ * @note these regions pass in as arguments because allocation on device is prohibited on CUDA
+ */
 __device__ bool is_valid_key(u8 *key, u16 key_length, u8 *salt, u16 salt_length, u16 pwd_verification, u8 *long_salt, u8 *first_part_1, u8 *first_part_2, u8 *second_part, u8 *derived_key) {
     
     u64 derived_key_length = 2 * key_length + 2;
@@ -163,6 +218,17 @@ __device__ bool is_valid_key(u8 *key, u16 key_length, u8 *salt, u16 salt_length,
     return true;
 }
 
+/**
+ * @brief Add a number to a number represented as an array
+ * 
+ * @param test_pwd_num The number represented as an array
+ * @param a The number to add
+ * @param legal_chars_length The length of the legal characters, also the base of the number
+ * 
+ * @return The carry value after adding the number
+ * 
+ * @note If the carry value is not 0, overflow occurs
+ */
 __device__ u64 add(int64_t test_pwd_num[MAX_PWD_LENGTH], u64 a, u64 legal_chars_length)
 {
     // add test_pwd_num by a
@@ -180,15 +246,27 @@ __device__ u64 add(int64_t test_pwd_num[MAX_PWD_LENGTH], u64 a, u64 legal_chars_
     return carry;
 }
 
+/**
+ * @brief Convert a number represented as an array to a string
+ * 
+ * @param test_pwd_num The number represented as an array
+ * @param test_pwd The string to save the result
+ * @param legal_chars The legal characters to use, also the converion table
+ * 
+ * @return void
+ * 
+ * @note The number represented as an array is terminated by -1
+ */
 __device__ void num_to_pwd(int64_t test_pwd_num[MAX_PWD_LENGTH], char *test_pwd, char *legal_chars)
 {
+    size_t len_legal_chars = device_strlen(legal_chars);
     for(size_t i = 0; i < MAX_PWD_LENGTH; i++){
         test_pwd[i] = '\0';
         if(test_pwd_num[i] == -1){
             break;
         }
+        assert(i < len_legal_chars); // make sure the index is valid
         test_pwd[i] = legal_chars[test_pwd_num[i]];
-
     }
     
 }

@@ -123,6 +123,19 @@ __device__ void SHA1Final(unsigned char digest[20], SHA1_CTX* context) {
     memset(&finalcount, '\0', sizeof(finalcount));
 }
 
+/**
+ * @brief Compute the SHA1 hash of a message
+ * 
+ * This function computes the SHA1 hash of a message.
+ * 
+ * @param message The message to hash
+ * @param len The length of the message
+ * @param hash The output buffer to store the hash
+ * @return void
+ * 
+ * @note The output buffer must be at least 20 bytes long. This function overwrites the first 20 bytes of the output buffer.
+ * 
+ */
 __device__ void sha1(const unsigned char *message, uint32_t len, unsigned char hash[20]) {
     SHA1_CTX context;
     SHA1Init(&context);
